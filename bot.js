@@ -4,106 +4,107 @@ require('dotenv').config();
 
 const app = express();
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const reminders = new Map();
+const activeTimers = new Map();
 
-// 1. Фиксированные настройки
-const DOMAIN = 'squezzy00.onrender.com'; // Жёстко прописываем домен
+// 1. Жёстко прописываем конфигурацию (убираем все переменные окружения)
 const WEBHOOK_PATH = '/tg-webhook';
+const DOMAIN = 'squezzy00.onrender.com'; // Ваш реальный домен
 const WEBHOOK_URL = `https://${DOMAIN}${WEBHOOK_PATH}`;
 
-// 2. Логирование всех входящих запросов
+// 2. Улучшенное логирование
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`, req.body);
   next();
 });
 
-// 3. Роут для проверки
+// 3. Роут для проверки с детальным статусом
 app.get('/', (req, res) => {
   res.send(`
     <h1>Telegram Reminder Bot</h1>
-    <p>Status: <span style="color: green;">Active</span></p>
-    <p>Webhook: <code>${WEBHOOK_PATH}</code></p>
-    <p>Последняя ошибка: <span id="error"></span></p>
-    <script>
-      fetch('/status').then(r => r.json()).then(data => {
-        document.getElementById('error').textContent = data.lastError || 'нет';
-      });
-    </script>
+    <p>Webhook URL: <code>${WEBHOOK_URL}</code></p>
+    <p>Active timers: ${activeTimers.size}</p>
+    <p>Last update: ${new Date().toLocaleString()}</p>
   `);
 });
 
-// 4. Статус сервера
-app.get('/status', (req, res) => {
-  res.json({
-    lastError: process.env.LAST_ERROR,
-    webhookUrl: WEBHOOK_URL
-  });
-});
-
-// 5. Команда /время (с улучшенной валидацией)
+// 4. Команда /время с полным логгированием
 bot.command('время', (ctx) => {
   try {
+    console.log('Получена команда:', ctx.message.text);
+    
     const [_, timeStr, ...messageParts] = ctx.message.text.split(' ');
     const message = messageParts.join(' ').trim();
     
-    if (!message) throw new Error('Текст напоминания не указан');
+    if (!message) throw new Error('Пустое напоминание');
     
     const timeMatch = timeStr.match(/^(\d+)([смчд])$/);
-    if (!timeMatch) throw new Error('Неверный формат времени');
+    if (!timeMatch) throw new Error('Неверный формат времени. Пример: /5с Напомнить');
     
     const [, amount, unit] = timeMatch;
     const units = { 'с': 1000, 'м': 60000, 'ч': 3600000, 'д': 86400000 };
     const ms = amount * (units[unit] || 1000);
 
-    // Отмена предыдущего напоминания
-    if (reminders.has(ctx.from.id)) {
-      clearTimeout(reminders.get(ctx.from.id));
+    // Отмена предыдущего таймера
+    if (activeTimers.has(ctx.from.id)) {
+      clearTimeout(activeTimers.get(ctx.from.id));
+      console.log(`Отменён предыдущий таймер для ${ctx.from.id}`);
     }
 
-    // Новое напоминание
-    const timer = setTimeout(() => {
-      ctx.reply(`@${ctx.from.username}, напоминание: ${message}`)
-        .catch(err => console.error('Ошибка отправки:', err));
-      reminders.delete(ctx.from.id);
+    // Устанавливаем новый таймер
+    const timer = setTimeout(async () => {
+      try {
+        await ctx.reply(`@${ctx.from.username}, напоминание: ${message}`);
+        activeTimers.delete(ctx.from.id);
+      } catch (err) {
+        console.error('Ошибка отправки напоминания:', err);
+      }
     }, ms);
 
-    reminders.set(ctx.from.id, timer);
-    ctx.reply(`⏰ Напоминание через ${timeStr}: "${message}"`);
+    activeTimers.set(ctx.from.id, timer);
+    ctx.reply(`⏰ Установлено напоминание через ${timeStr}: "${message}"`);
+    console.log(`Новый таймер для ${ctx.from.id} на ${timeStr}`);
+    
   } catch (err) {
-    ctx.reply(`❌ Ошибка: ${err.message}\nПример: /5с Позвонить маме`);
+    console.error('Ошибка обработки команды:', err);
+    ctx.reply(`❌ Ошибка: ${err.message}`);
   }
 });
 
-// 6. Вебхук (исправленная версия)
-app.post(WEBHOOK_PATH, (req, res) => {
-  bot.webhookCallback(WEBHOOK_PATH)(req, res)
-    .then(() => res.status(200).end())
-    .catch(err => {
-      console.error('Webhook error:', err);
-      process.env.LAST_ERROR = err.message;
-      res.status(200).end(); // Всегда возвращаем 200 для Telegram
-    });
+// 5. Обработчик вебхука с улучшенной диагностикой
+app.post(WEBHOOK_PATH, async (req, res) => {
+  try {
+    console.log('Входящее обновление:', JSON.stringify(req.body, null, 2));
+    await bot.handleUpdate(req.body);
+    res.status(200).end();
+  } catch (err) {
+    console.error('Ошибка обработки вебхука:', err);
+    res.status(200).end(); // Всегда возвращаем 200 для Telegram
+  }
 });
 
-// 7. Запуск сервера
-const PORT = process.env.PORT || 3000;
+// 6. Запуск сервера с полной диагностикой
+const PORT = 10000; // Жёстко указываем порт
 app.listen(PORT, async () => {
   console.log(`🚀 Сервер запущен на порту ${PORT}`);
   
   try {
     // Принудительный сброс вебхука
     await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    console.log('Старый вебхук удалён');
+    
     await bot.telegram.setWebhook(WEBHOOK_URL, {
       allowed_updates: ['message'],
       drop_pending_updates: true
     });
     console.log(`✅ Вебхук установлен: ${WEBHOOK_URL}`);
     
-    // Проверка связи
+    // Проверка связи с Telegram API
     const me = await bot.telegram.getMe();
     console.log(`🤖 Бот @${me.username} готов к работе`);
+    console.log(`🔄 Проверка: https://${DOMAIN}`);
+    
   } catch (err) {
-    console.error('❌ Фатальная ошибка:', err.message);
-    process.env.LAST_ERROR = err.message;
+    console.error('❌ Критическая ошибка инициализации:', err);
+    process.exit(1);
   }
 });
