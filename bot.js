@@ -5,72 +5,61 @@ require('dotenv').config();
 const app = express();
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Конфигурация вебхука (главный секрет!)
-const WEBHOOK_PATH = '/secret-webhook-' + Math.random().toString(36).slice(2);
-const WEBHOOK_URL = `https://${process.env.RENDER_EXTERNAL_URL || 'squezzy00.onrender.com'}${WEBHOOK_PATH}`;
+// Фикс для Render (убираем дублирование https://)
+const getWebhookUrl = () => {
+  const domain = process.env.RENDER_EXTERNAL_URL || 'squezzy00.onrender.com';
+  const cleanDomain = domain.replace(/^https?:\/\//, ''); // Удаляем протокол если есть
+  return `https://${cleanDomain}/webhook-${Math.random().toString(36).slice(2)}`;
+};
 
-// Проверка конфигурации
+const WEBHOOK_URL = getWebhookUrl();
+
 console.log('=== НАСТРОЙКИ ===');
+console.log('BOT_TOKEN:', process.env.BOT_TOKEN ? 'OK' : 'MISSING');
 console.log('WEBHOOK_URL:', WEBHOOK_URL);
-console.log('BOT_TOKEN:', process.env.BOT_TOKEN ? 'OK' : 'ОШИБКА: не задан');
 
-// Роут для проверки
-app.get('/', (req, res) => {
-  res.send('Бот активен! Вебхук: ' + WEBHOOK_PATH);
-});
+// Тестовый роут
+app.get('/', (req, res) => res.send('Бот активен! Проверьте Telegram.'));
 
-// Команды бота
-bot.command('start', (ctx) => {
-  console.log('Получена команда /start от', ctx.from.id);
-  ctx.reply('🚀 Бот работает! Попробуйте /ping');
-});
+// Команды
+bot.command('start', (ctx) => ctx.reply('✅ Бот работает! /ping'));
+bot.command('ping', (ctx) => ctx.reply(`🏓 Pong! ${new Date().toLocaleTimeString()}`));
 
-bot.command('ping', (ctx) => {
-  ctx.reply('🏓 Pong! ' + new Date().toLocaleTimeString());
-});
-
-// Настройка вебхука (исправленная версия)
+// Вебхук
 const setupWebhook = async () => {
   try {
-    console.log('\n[1/3] Сбрасываю старый вебхук...');
+    console.log('[1/3] Удаление старого вебхука...');
     await bot.telegram.deleteWebhook({ drop_pending_updates: true });
     
-    console.log('[2/3] Устанавливаю новый вебхук...');
-    await bot.telegram.setWebhook(WEBHOOK_URL, {
-      allowed_updates: ['message', 'callback_query'],
-      drop_pending_updates: true
-    });
+    console.log('[2/3] Установка нового:', WEBHOOK_URL);
+    await bot.telegram.setWebhook(WEBHOOK_URL);
     
-    console.log('[3/3] Вебхук установлен на:', WEBHOOK_URL);
+    console.log('[3/3] Вебхук установлен!');
     return true;
   } catch (err) {
-    console.error('❌ Ошибка вебхука:', err.description || err.message);
+    console.error('❌ Ошибка:', err.description || err.message);
     return false;
   }
 };
 
-// Регистрация обработчика
-app.use(bot.webhookCallback(WEBHOOK_PATH));
+app.use(bot.webhookCallback(WEBHOOK_URL.split('/').pop()));
 
-// Запуск сервера
+// Запуск
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  console.log(`\n🌐 Сервер запущен на порту ${PORT}`);
+  console.log(`\n🚀 Сервер запущен на порту ${PORT}`);
+  await setupWebhook();
   
-  // Проверка связи с Telegram
+  // Проверка связи
   try {
     const me = await bot.telegram.getMe();
-    console.log(`🤖 Бот @${me.username} готов к работе!`);
-    
-    // Установка вебхука
-    await setupWebhook();
+    console.log(`🤖 Бот @${me.username} готов`);
   } catch (err) {
-    console.error('❌ Фатальная ошибка:', err.message);
-    process.exit(1);
+    console.error('❌ Ошибка Telegram API:', err.message);
   }
 });
 
-// Логирование всех ошибок
+// Логирование ошибок
 process.on('unhandledRejection', (err) => {
   console.error('⚠️ Необработанная ошибка:', err.message);
 });
