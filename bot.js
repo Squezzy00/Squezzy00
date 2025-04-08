@@ -5,56 +5,63 @@ require('dotenv').config();
 const app = express();
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// 1. Фиксированные настройки вебхука
-const WEBHOOK_PATH = '/tg-webhook';
-const DOMAIN = 'squezzy00.onrender.com'; // Ваш реальный домен
-const WEBHOOK_URL = `https://${DOMAIN}${WEBHOOK_PATH}`;
+// Хранилище активных таймеров
+const reminders = new Map();
 
-// 2. Минимальный функционал бота
-bot.command('start', (ctx) => {
-  console.log(`[CMD] /start от ${ctx.from.id}`);
-  ctx.reply('✅ Бот работает!');
-});
+// Обработчик команды /время
+bot.command('время', (ctx) => {
+  const [_, timeStr, ...messageParts] = ctx.message.text.split(' ');
+  const message = messageParts.join(' ');
 
-// 3. Правильная регистрация вебхука
-app.use(express.json());
-app.post(WEBHOOK_PATH, (req, res) => {
-  console.log('[WEBHOOK] Получен запрос');
-  bot.webhookCallback(WEBHOOK_PATH)(req, res)
-    .then(() => res.status(200).end())
-    .catch(err => {
-      console.error('Ошибка обработки:', err);
-      res.status(200).end(); // Всегда возвращаем 200 Telegram
-    });
-});
-
-// 4. Роут для проверки
-app.get('/', (req, res) => {
-  res.send(`
-    <h1>Бот активен</h1>
-    <p>Вебхук: <code>${WEBHOOK_PATH}</code></p>
-    <p>Ошибок: ${process.env.LAST_ERROR || 'нет'}</p>
-  `);
-});
-
-// 5. Запуск сервера
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
-  console.log(`🚀 Сервер запущен на порту ${PORT}`);
-  
-  try {
-    // Принудительный сброс вебхука
-    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-    await bot.telegram.setWebhook(WEBHOOK_URL, {
-      allowed_updates: ['message'],
-      drop_pending_updates: true
-    });
-    
-    console.log(`✅ Вебхук установлен: ${WEBHOOK_URL}`);
-    const me = await bot.telegram.getMe();
-    console.log(`🤖 Бот @${me.username} готов`);
-  } catch (err) {
-    console.error('❌ Ошибка инициализации:', err.message);
-    process.env.LAST_ERROR = err.message;
+  // Парсим время
+  const timeMatch = timeStr.match(/^(\d+)([смчд])$/);
+  if (!timeMatch) {
+    return ctx.reply('❌ Формат: /<время><единица> <напоминание>\nПример: /5с Позвонить маме');
   }
+
+  const [, amount, unit] = timeMatch;
+  let milliseconds;
+
+  switch(unit) {
+    case 'с': milliseconds = amount * 1000; break;
+    case 'м': milliseconds = amount * 1000 * 60; break;
+    case 'ч': milliseconds = amount * 1000 * 60 * 60; break;
+    case 'д': milliseconds = amount * 1000 * 60 * 60 * 24; break;
+    default: return ctx.reply('❌ Неверная единица времени (используйте с, м, ч или д)');
+  }
+
+  // Создаем таймер
+  const timerId = setTimeout(() => {
+    ctx.reply(`@${ctx.from.username}, напоминание: ${message}`);
+    reminders.delete(ctx.from.id);
+  }, milliseconds);
+
+  // Сохраняем таймер
+  reminders.set(ctx.from.id, timerId);
+  ctx.reply(`⏰ Напоминание установлено на ${timeStr}!`);
+});
+
+// Отмена всех напоминаний
+bot.command('отмена', (ctx) => {
+  if (reminders.has(ctx.from.id)) {
+    clearTimeout(reminders.get(ctx.from.id));
+    reminders.delete(ctx.from.id);
+    ctx.reply('❌ Все напоминания отменены');
+  } else {
+    ctx.reply('⚠️ У вас нет активных напоминаний');
+  }
+});
+
+// Вебхук и запуск сервера (остальной код без изменений)
+const WEBHOOK_PATH = '/tg-webhook';
+app.use(express.json());
+app.post(WEBHOOK_PATH, bot.webhookCallback());
+app.get('/', (req, res) => res.send('Бот с напоминаниями активен!'));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Сервер запущен на порту ${PORT}`);
+  bot.telegram.setWebhook(`https://${process.env.RENDER_EXTERNAL_URL || 'squezzy00.onrender.com'}${WEBHOOK_PATH}`)
+    .then(() => console.log('✅ Вебхук установлен'))
+    .catch(console.error);
 });
