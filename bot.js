@@ -1,9 +1,8 @@
 const { Telegraf, Markup } = require('telegraf');
 require('dotenv').config();
 
-// Хранилище клавиатур для пользователей (в памяти)
+// Хранилище клавиатур для пользователей
 const userKeyboards = new Map();
-
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // Команда /test
@@ -13,19 +12,21 @@ bot.command('test', (ctx) => {
 
 // Команда /see - создает клавиатуру
 bot.command('see', (ctx) => {
-  const buttonsText = ctx.message.text.split(' ').slice(1).join(' ').split(', ');
+  const buttonsText = ctx.message.text.split(' ').slice(1).join(' ').split(',');
   
-  if (buttonsText.length === 0 || buttonsText[0] === '') {
+  if (buttonsText.length === 0 || buttonsText[0].trim() === '') {
     return ctx.reply('Используйте: /see Кнопка1, Кнопка2, Кнопка3');
   }
 
   // Сохраняем клавиатуру для пользователя
-  userKeyboards.set(ctx.from.id, buttonsText);
+  const trimmedButtons = buttonsText.map(btn => btn.trim());
+  userKeyboards.set(ctx.from.id, trimmedButtons);
 
   const keyboard = Markup.keyboard(
-    buttonsText.map(btn => Markup.button.text(btn.trim()))
-    .resize()
-    .persistent(); // Клавиатура не скрывается после нажатия
+    trimmedButtons.map(btn => btn)
+  )
+  .resize()
+  .persistent(); // Клавиатура не скрывается после нажатия
 
   ctx.reply('Клавиатура активирована. Используйте /stop чтобы убрать.', keyboard);
 });
@@ -49,11 +50,23 @@ bot.on('text', (ctx) => {
   }
 });
 
-// Запуск бота
-bot.launch()
-  .then(() => console.log('Бот запущен!'))
-  .catch(err => console.error('Ошибка запуска:', err));
+// Вебхук для Render
+const express = require('express');
+const app = express();
+app.use(express.json());
+app.use(bot.webhookCallback('/'));
+bot.telegram.setWebhook(process.env.RENDER_EXTERNAL_URL ? 
+  `https://${process.env.RENDER_EXTERNAL_URL}/` : 
+  'https://your-render-url.onrender.com/'
+);
 
-// Остановка бота
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+// Запуск сервера
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Бот запущен на порту ${PORT}`);
+});
+
+// Обработка ошибок
+process.on('uncaughtException', (err) => {
+  console.error('Необработанная ошибка:', err);
+});
