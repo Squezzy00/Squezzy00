@@ -5,51 +5,50 @@ require('dotenv').config();
 const app = express();
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// 1. Фиксированные настройки (не меняйте!)
+// 1. Конфигурация (фиксированные значения)
 const WEBHOOK_PATH = '/tg-webhook';
-const DOMAIN = 'squezzy00.onrender.com'; // Прямо указываем ваш домен
+const DOMAIN = 'squezzy00.onrender.com';
 const WEBHOOK_URL = `https://${DOMAIN}${WEBHOOK_PATH}`;
 
-// 2. Минимальный функционал бота
-bot.command('start', (ctx) => ctx.reply('✅ Бот жив! /ping'));
-bot.command('ping', (ctx) => ctx.reply(`🏓 Pong: ${new Date().toLocaleString()}`));
+// 2. Минимальные команды
+bot.command('start', (ctx) => ctx.reply('🟢 Бот работает! /ping'));
+bot.command('ping', (ctx) => ctx.reply(`🏓 Pong: ${Date.now()}`));
 
-// 3. Настройка вебхука (упрощенная версия)
+// 3. Настройка вебхука
 const setupWebhook = async () => {
   try {
     await bot.telegram.deleteWebhook();
     await bot.telegram.setWebhook(WEBHOOK_URL);
-    console.log(`✅ Вебхук установлен на: ${WEBHOOK_URL}`);
+    console.log(`✅ Вебхук: ${WEBHOOK_URL}`);
   } catch (err) {
     console.error('❌ Ошибка вебхука:', err.message);
   }
 };
 
-// 4. Регистрация вебхука (исправлено!)
+// 4. Регистрация обработчика
 app.use(express.json());
 app.post(WEBHOOK_PATH, bot.webhookCallback());
 
 // 5. Роут для проверки
 app.get('/', (req, res) => {
   res.send(`
-    <h1>SigmaBot (@SigmaTG_bot)</h1>
-    <p>Статус: <b>активен</b></p>
-    <p>Вебхук: <code>${WEBHOOK_PATH}</code></p>
+    <h1>@SigmaTG_bot</h1>
+    <p>Status: <span style="color:green">ACTIVE</span></p>
+    <p>Webhook: <code>${WEBHOOK_PATH}</code></p>
   `);
 });
 
 // 6. Запуск сервера
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  console.log(`🚀 Сервер запущен на порту ${PORT}`);
+  console.log(`🚀 Server started on port ${PORT}`);
   await setupWebhook();
   
-  // Тест связи с Telegram
+  // Проверка без отправки сообщений
   try {
     const me = await bot.telegram.getMe();
-    console.log(`🤖 Бот @${me.username} готов к работе!`);
-    await bot.telegram.sendMessage(me.id, "🔄 Бот перезапущен");
+    console.log(`🤖 Bot ready: @${me.username}`);
   } catch (err) {
-    console.error('❌ Ошибка связи с Telegram:', err.message);
+    console.error('Telegram connection error:', err.message);
   }
 });
