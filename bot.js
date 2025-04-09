@@ -1,4 +1,4 @@
-const { Telegraf } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 const express = require('express');
 const { Pool } = require('pg');
 require('dotenv').config();
@@ -12,117 +12,192 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Создание таблицы при запуске
+// Создание таблиц
 (async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS reminders (
-        id SERIAL PRIMARY KEY,
-        user_id BIGINT NOT NULL,
-        username TEXT,
-        text TEXT NOT NULL,
-        end_time BIGINT NOT NULL,
-        unit TEXT NOT NULL
-      )
-    `);
-    console.log('✅ Таблица reminders готова');
-  } catch (err) {
-    console.error('❌ Ошибка создания таблицы:', err);
-  }
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_keyboards (
+      user_id BIGINT PRIMARY KEY,
+      buttons TEXT[] NOT NULL DEFAULT '{}'
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_keyboards (
+      chat_id BIGINT PRIMARY KEY,
+      buttons TEXT[] NOT NULL DEFAULT '{}'
+    )
+  `);
 })();
 
-// Команда /start
-bot.command('start', (ctx) => {
-  ctx.reply(`
-⏰ <b>Доступные команды:</b>
-/5с Текст - напомнить через 5 секунд
-/10м Текст - через 10 минут
-/1ч Текст - через 1 час
-/2д Текст - через 2 дня
-/таймеры - показать активные напоминания
-  `, { parse_mode: 'HTML' });
-});
+// Хранилище временных клавиатур
+const tempKeyboards = new Map();
 
-// Команда /таймеры (ИСПРАВЛЕННАЯ)
-bot.command('таймеры', async (ctx) => {
-  const userId = ctx.from.id;
+// Команда /set - создание постоянной клавиатуры
+bot.command('set', async (ctx) => {
+  const buttons = ctx.message.text.split(' ').slice(1).join(' ').split(',');
   
-  try {
-    const res = await pool.query(
-      `SELECT text, unit, 
-       (end_time - EXTRACT(EPOCH FROM NOW())*1000) AS ms_left
-       FROM reminders 
-       WHERE user_id = $1 AND end_time > EXTRACT(EPOCH FROM NOW())*1000`,
-      [userId]
-    );
-
-    if (res.rows.length === 0) {
-      return ctx.reply('У вас нет активных напоминаний ⏳');
-    }
-
-    const timerList = res.rows.map(row => {
-      const timeLeft = Math.ceil(row.ms_left / 1000);
-      const units = { 'с': 'сек', 'м': 'мин', 'ч': 'час', 'д': 'дн' };
-      return `⏱ ${row.text} (осталось: ${timeLeft}${units[row.unit] || '?'})`;
-    }).join('\n');
-
-    ctx.reply(`📋 Ваши напоминания:\n${timerList}`);
-  } catch (err) {
-    console.error('Ошибка БД:', err);
-    ctx.reply('Произошла ошибка при загрузке напоминаний 😢');
+  if (buttons.length === 0 || buttons[0] === '') {
+    return ctx.reply('Используйте: /set Кнопка1, Кнопка2, Кнопка3');
   }
-});
-
-// Обработчик таймеров
-bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
-  const userId = ctx.from.id;
-  const username = ctx.from.username || 'пользователь';
-  const [, amount, unit, text] = ctx.match;
-  
-  const unitMap = { 'с':'с', 'c':'с', 'м':'м', 'm':'м', 'ч':'ч', 'h':'ч', 'д':'д', 'd':'д' };
-  const cleanUnit = unitMap[unit.toLowerCase()];
-
-  const ms = {
-    'с': amount * 1000,
-    'м': amount * 60 * 1000,
-    'ч': amount * 60 * 60 * 1000,
-    'д': amount * 24 * 60 * 60 * 1000
-  }[cleanUnit];
-
-  const endTime = Date.now() + ms;
 
   try {
     await pool.query(
-      'INSERT INTO reminders (user_id, username, text, end_time, unit) VALUES ($1, $2, $3, $4, $5)',
-      [userId, username, text, endTime, cleanUnit]
+      'INSERT INTO user_keyboards (user_id, buttons) VALUES ($1, $2) ' +
+      'ON CONFLICT (user_id) DO UPDATE SET buttons = $2',
+      [ctx.from.id, buttons]
     );
-
-    setTimeout(async () => {
-      await ctx.reply(`@${username}, напоминание: ${text}`);
-      await pool.query('DELETE FROM reminders WHERE user_id = $1 AND text = $2', [userId, text]);
-    }, ms);
-
-    ctx.reply(`⏳ Напоминание установлено через ${amount}${cleanUnit}: "${text}"`);
+    
+    ctx.reply(
+      `✅ Ваша постоянная клавиатура сохранена!\n` +
+      `Используйте /open для показа\n\n` +
+      `Разработчик: @squezzy00`,
+      Markup.keyboard(buttons).resize().persistent()
+    );
   } catch (err) {
-    console.error('Ошибка БД:', err);
-    ctx.reply('Не удалось установить напоминание');
+    console.error('Ошибка сохранения клавиатуры:', err);
+    ctx.reply('Произошла ошибка при сохранении');
   }
 });
 
-// Вебхук
-app.post(WEBHOOK_PATH, (req, res) => {
-  bot.handleUpdate(req.body)
-    .then(() => res.status(200).end())
-    .catch(err => {
-      console.error('Ошибка обработки:', err);
-      res.status(200).end();
-    });
+// Команда /see - временная клавиатура
+bot.command('see', (ctx) => {
+  const buttons = ctx.message.text.split(' ').slice(1).join(' ').split(',');
+  
+  if (buttons.length === 0 || buttons[0] === '') {
+    return ctx.reply('Используйте: /see Кнопка1, Кнопка2, Кнопка3');
+  }
+
+  tempKeyboards.set(ctx.from.id, buttons);
+  
+  ctx.reply(
+    `⌛ Временная клавиатура активирована\n` +
+    `Используйте /stop для удаления\n\n` +
+    `Разработчик: @squezzy00`,
+    Markup.keyboard(buttons).resize().persistent()
+  );
 });
 
-const PORT = 10000;
-app.listen(PORT, async () => {
+// Команда /stop - удаление клавиатур
+bot.command('stop', async (ctx) => {
+  tempKeyboards.delete(ctx.from.id);
+  
+  ctx.reply(
+    'Все клавиатуры удалены',
+    Markup.removeKeyboard()
+  );
+});
+
+// Команда /cfg - клавиатура чата (для админов)
+bot.command('cfg', async (ctx) => {
+  if (!ctx.chat || !await isChatAdmin(ctx)) {
+    return ctx.reply('Эта команда только для администраторов чата');
+  }
+
+  const buttons = ctx.message.text.split(' ').slice(1).join(' ').split(',');
+  
+  if (buttons.length === 0 || buttons[0] === '') {
+    return ctx.reply('Используйте: /cfg Кнопка1, Кнопка2, Кнопка3');
+  }
+
+  try {
+    await pool.query(
+      'INSERT INTO chat_keyboards (chat_id, buttons) VALUES ($1, $2) ' +
+      'ON CONFLICT (chat_id) DO UPDATE SET buttons = $2',
+      [ctx.chat.id, buttons]
+    );
+    
+    ctx.reply(
+      `✅ Клавиатура чата сохранена!\n` +
+      `Участники смогут открыть её через /open\n\n` +
+      `Разработчик: @squezzy00`
+    );
+  } catch (err) {
+    console.error('Ошибка сохранения клавиатуры чата:', err);
+    ctx.reply('Произошла ошибка при сохранении');
+  }
+});
+
+// Команда /open - открытие клавиатуры
+bot.command('open', async (ctx) => {
+  try {
+    // 1. Проверяем временные клавиатуры
+    if (tempKeyboards.has(ctx.from.id)) {
+      const buttons = tempKeyboards.get(ctx.from.id);
+      return ctx.reply(
+        `⌛ Открыта временная клавиатура\n\n` +
+        `Разработчик: @squezzy00`,
+        Markup.keyboard(buttons).resize().persistent()
+      );
+    }
+
+    // 2. Проверяем постоянные клавиатуры пользователя
+    const userKeyboard = await pool.query(
+      'SELECT buttons FROM user_keyboards WHERE user_id = $1',
+      [ctx.from.id]
+    );
+
+    if (userKeyboard.rows.length > 0) {
+      return ctx.reply(
+        `✅ Открыта ваша постоянная клавиатура\n\n` +
+        `Разработчик: @squezzy00`,
+        Markup.keyboard(userKeyboard.rows[0].buttons).resize().persistent()
+      );
+    }
+
+    // 3. Проверяем клавиатуру чата (если команда в группе)
+    if (ctx.chat && ctx.chat.type !== 'private') {
+      const chatKeyboard = await pool.query(
+        'SELECT buttons FROM chat_keyboards WHERE chat_id = $1',
+        [ctx.chat.id]
+      );
+
+      if (chatKeyboard.rows.length > 0) {
+        return ctx.reply(
+          `👥 Открыта клавиатура чата\n\n` +
+          `Разработчик: @squezzy00`,
+          Markup.keyboard(chatKeyboard.rows[0].buttons).resize().persistent()
+        );
+      }
+    }
+
+    ctx.reply('У вас нет сохраненных клавиатур. Используйте /set или /see');
+  } catch (err) {
+    console.error('Ошибка открытия клавиатуры:', err);
+    ctx.reply('Произошла ошибка при открытии клавиатуры');
+  }
+});
+
+// Обработка нажатий кнопок
+bot.on('text', async (ctx) => {
+  if (ctx.message.reply_to_message && 
+      ctx.message.reply_to_message.text.includes('Разработчик: @squezzy00')) {
+    await ctx.reply(
+      `Вы нажали: "${ctx.message.text}"`,
+      { reply_to_message_id: ctx.message.reply_to_message.message_id }
+    );
+  }
+});
+
+// Проверка прав администратора
+async function isChatAdmin(ctx) {
+  if (ctx.chat.type === 'private') return false;
+  
+  try {
+    const admins = await ctx.getChatAdministrators();
+    return admins.some(a => a.user.id === ctx.from.id);
+  } catch (err) {
+    console.error('Ошибка проверки админа:', err);
+    return false;
+  }
+}
+
+// Вебхук и запуск сервера
+app.post('/webhook', (req, res) => {
+  bot.handleUpdate(req.body);
+  res.status(200).end();
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
   console.log(`🚀 Сервер запущен на порту ${PORT}`);
-  await bot.telegram.deleteWebhook();
-  await bot.telegram.setWebhook(WEBHOOK_URL);
-  console.log(`✅ Вебхук: ${WEBHOOK_URL}`);
+  bot.telegram.setWebhook(`${process.env.WEBHOOK_URL}/webhook`);
 });
