@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 10000;
 const WEBHOOK_URL = `https://${DOMAIN.replace(/^https?:\/\//, '')}${WEBHOOK_PATH}`;
 
 // Настройки админа
-const ADMINS = ['squezzy00']; // Ваш username
+const ADMINS = [5005387093]; // Ваш user_id
 const disabledCommands = new Set(); // Хранилище отключенных команд
 
 // Подключение к PostgreSQL
@@ -65,9 +65,9 @@ function createKeyboard(buttons) {
     .persistent();
 }
 
-// Проверка прав администратора
+// Проверка прав администратора по user_id
 function isAdmin(ctx) {
-  return ADMINS.includes(ctx.from.username);
+  return ADMINS.includes(ctx.from.id);
 }
 
 // Команда управления командами (только для админа)
