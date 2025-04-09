@@ -4,7 +4,7 @@ require('dotenv').config();
 
 const app = express();
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const userTimers = new Map(); // { userId: { timerId: { text, timeout } } }
+const userTimers = new Map(); // { userId: { timerId: { text, timeout, unit } } }
 
 // Конфигурация
 const WEBHOOK_PATH = '/tg-webhook';
@@ -18,7 +18,7 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.send(`
     <h1>Бот с напоминаниями</h1>
-    <p>Активных таймеров: ${Array.from(userTimers.values()).reduce((acc, timers) => acc + Object.keys(timers).length, 0)}</p>
+    <p>Используйте: /5с Текст, /10м Текст, /1ч Текст, /2д Текст</p>
   `);
 });
 
@@ -43,32 +43,43 @@ bot.command('таймеры', (ctx) => {
     return ctx.reply('У вас нет активных напоминаний');
   }
 
-  const timerList = Object.values(timers).map(t => `⏱ ${t.text}`).join('\n');
+  const timerList = Object.values(timers).map(t => 
+    `⏱ ${t.text} (через ${t.timeLeft}${t.unit})`
+  ).join('\n');
+  
   ctx.reply(`📋 Ваши напоминания:\n${timerList}`);
 });
 
 // Обработчик таймеров
-bot.hears(/^\/(\d+)([сmcчhдd])\s(.+)/i, (ctx) => {
+bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, (ctx) => {
   const userId = ctx.from.id;
-  const username = ctx.from.username;
+  const username = ctx.from.username || 'пользователь';
   const [, amount, unit, text] = ctx.match;
-
-  // Конвертация в миллисекунды
-  const units = {
-    'с': 1000, 'c': 1000,
-    'м': 60000, 'm': 60000,
-    'ч': 3600000, 'h': 3600000,
-    'д': 86400000, 'd': 86400000
+  
+  // Определяем единицы времени
+  const unitMap = {
+    'с': 'с', 'c': 'с',
+    'м': 'м', 'm': 'м',
+    'ч': 'ч', 'h': 'ч',
+    'д': 'д', 'd': 'д'
   };
-
-  if (!units[unit.toLowerCase()]) {
+  
+  const cleanUnit = unitMap[unit.toLowerCase()];
+  if (!cleanUnit) {
     return ctx.reply('❌ Неверная единица времени (используйте: с, м, ч, д)');
   }
 
-  const ms = amount * units[unit.toLowerCase()];
-  const timerId = Date.now(); // Уникальный ID для таймера
+  // Конвертация в миллисекунды
+  const timeInMs = {
+    'с': amount * 1000,
+    'м': amount * 60 * 1000,
+    'ч': amount * 60 * 60 * 1000,
+    'д': amount * 24 * 60 * 60 * 1000
+  }[cleanUnit];
 
-  // Инициализация хранилища для пользователя
+  const timerId = Date.now(); // Уникальный ID таймера
+
+  // Инициализация хранилища
   if (!userTimers.has(userId)) {
     userTimers.set(userId, {});
   }
@@ -82,11 +93,18 @@ bot.hears(/^\/(\d+)([сmcчhдd])\s(.+)/i, (ctx) => {
     } finally {
       delete userTimers.get(userId)[timerId];
     }
-  }, ms);
+  }, timeInMs);
 
   // Сохраняем таймер
-  userTimers.get(userId)[timerId] = { text: `${amount}${unit}: ${text}`, timeout };
-  ctx.reply(`⏳ Напоминание установлено: "${text}" через ${amount}${unit}`);
+  userTimers.get(userId)[timerId] = {
+    text,
+    timeout,
+    unit: cleanUnit,
+    timeLeft: amount,
+    startTime: Date.now()
+  };
+
+  ctx.reply(`⏳ Напоминание установлено через ${amount}${cleanUnit}: "${text}"`);
 });
 
 // Вебхук
