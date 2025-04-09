@@ -305,4 +305,12 @@ app.get('/', (req, res) => {
 
 // Запуск сервера
 app.listen(PORT, async () => {
-  console.log
+  console.log(`🚀 Сервер запущен на порту ${PORT}`);
+  try {
+    await bot.telegram.deleteWebhook();
+    await bot.telegram.setWebhook(WEBHOOK_URL);
+    console.log(`✅ Вебхук установлен: ${WEBHOOK_URL}`);
+  } catch (err) {
+    console.error('❌ Ошибка вебхука:', err);
+  }
+});
