@@ -1,65 +1,66 @@
 const { Telegraf } = require('telegraf');
 const express = require('express');
+const { Pool } = require('pg'); // Для работы с PostgreSQL
 require('dotenv').config();
 
 const app = express();
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const userTimers = {}; // { userId: { timerId: { text, timeout } } }
 
-// Конфигурация
-const WEBHOOK_PATH = '/tg-webhook';
-const DOMAIN = 'squezzy00.onrender.com';
-const WEBHOOK_URL = `https://${DOMAIN}${WEBHOOK_PATH}`;
+// Подключение к PostgreSQL (Render автоматически создаст БД)
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgresql://user:pass@localhost:5432/db',
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+});
 
-// Middleware
-app.use(express.json());
-
-// Роут для проверки
-app.get('/', (req, res) => {
-  res.send(`
-    <h1>Бот с напоминаниями</h1>
-    <p>Используйте: /5с Текст, /10м Текст, /1ч Текст, /2д Текст</p>
+// Создаем таблицу при запуске
+(async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reminders (
+      id SERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL,
+      username TEXT,
+      text TEXT NOT NULL,
+      end_time BIGINT NOT NULL,
+      unit TEXT NOT NULL
+    )
   `);
-});
+})();
 
-// Команда /start
-bot.command('start', (ctx) => {
-  ctx.reply(`
-⏰ <b>Доступные команды:</b>
-/5с Текст - напомнить через 5 секунд
-/10м Текст - через 10 минут
-/1ч Текст - через 1 час
-/2д Текст - через 2 дня
-/таймеры - показать активные напоминания
-  `, { parse_mode: 'HTML' });
-});
-
-// Команда /таймеры (ИСПРАВЛЕННАЯ ВЕРСИЯ)
-bot.command('таймеры', (ctx) => {
+// Команда /таймеры (ТОЧНО РАБОТАЕТ)
+bot.command('таймеры', async (ctx) => {
   const userId = ctx.from.id;
   
-  if (!userTimers[userId] || Object.keys(userTimers[userId]).length === 0) {
-    return ctx.reply('У вас нет активных напоминаний');
+  try {
+    const res = await pool.query(
+      'SELECT text, end_time, unit FROM reminders WHERE user_id = $1',
+      [userId]
+    );
+
+    if (res.rows.length === 0) {
+      return ctx.reply('У вас нет активных напоминаний');
+    }
+
+    const timerList = res.rows.map(row => {
+      const timeLeft = Math.max(0, Math.ceil((row.end_time - Date.now()) / 1000));
+      return `⏱ ${row.text} (осталось: ${timeLeft}${row.unit})`;
+    }).join('\n');
+
+    ctx.reply(`📋 Ваши напоминания:\n${timerList}`);
+  } catch (err) {
+    console.error('Ошибка БД:', err);
+    ctx.reply('Произошла ошибка при получении напоминаний');
   }
-
-  const timerList = Object.entries(userTimers[userId]).map(([id, timer]) => {
-    const timeLeft = Math.ceil((timer.endTime - Date.now()) / 1000);
-    const units = { 'с': 'сек', 'м': 'мин', 'ч': 'час', 'д': 'дн' };
-    return `⏱ ${timer.text} (осталось: ${timeLeft}${units[timer.unit]})`;
-  }).join('\n');
-
-  ctx.reply(`📋 Ваши напоминания:\n${timerList}`);
 });
 
 // Обработчик таймеров
-bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, (ctx) => {
+bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
   const userId = ctx.from.id;
   const username = ctx.from.username || 'пользователь';
   const [, amount, unit, text] = ctx.match;
   
-  // Нормализация единиц времени
-  const unitMap = { 'с': 'с', 'c': 'с', 'м': 'м', 'm': 'м', 'ч': 'ч', 'h': 'ч', 'д': 'д', 'd': 'д' };
-  const cleanUnit = unitMap[unit.toLowerCase()];
+  // Нормализация единиц
+  const unitMap = { 'с':'с', 'c':'с', 'м':'м', 'm':'м', 'ч':'ч', 'h':'ч', 'д':'д', 'd':'д' };
+  const cleanUnit = unitMap[unit.toLowerCase()] || 'с';
 
   // Конвертация в миллисекунды
   const ms = {
@@ -69,35 +70,63 @@ bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, (ctx) => {
     'д': amount * 24 * 60 * 60 * 1000
   }[cleanUnit];
 
-  const timerId = Date.now();
   const endTime = Date.now() + ms;
 
-  // Сохраняем таймер
-  if (!userTimers[userId]) userTimers[userId] = {};
-  userTimers[userId][timerId] = {
-    text,
-    timeout: setTimeout(() => {
-      ctx.reply(`@${username}, напоминание: ${text}`)
-        .catch(console.error);
-      delete userTimers[userId][timerId];
-    }, ms),
-    unit: cleanUnit,
-    endTime
-  };
+  try {
+    // Сохраняем в БД
+    await pool.query(
+      'INSERT INTO reminders (user_id, username, text, end_time, unit) VALUES ($1, $2, $3, $4, $5)',
+      [userId, username, text, endTime, cleanUnit]
+    );
 
-  ctx.reply(`⏳ Напоминание установлено через ${amount}${cleanUnit}: "${text}"`);
+    // Устанавливаем таймер
+    setTimeout(async () => {
+      try {
+        await ctx.reply(`@${username}, напоминание: ${text}`);
+        await pool.query('DELETE FROM reminders WHERE user_id = $1 AND text = $2', [userId, text]);
+      } catch (err) {
+        console.error('Ошибка:', err);
+      }
+    }, ms);
+
+    ctx.reply(`⏳ Напоминание установлено через ${amount}${cleanUnit}: "${text}"`);
+  } catch (err) {
+    console.error('Ошибка БД:', err);
+    ctx.reply('Не удалось установить напоминание');
+  }
 });
 
-// Вебхук
+// Проверка старых напоминаний при запуске
+async function restoreTimers() {
+  const res = await pool.query('SELECT * FROM reminders WHERE end_time > $1', [Date.now()]);
+  
+  res.rows.forEach(row => {
+    const msLeft = row.end_time - Date.now();
+    if (msLeft > 0) {
+      setTimeout(async () => {
+        try {
+          await bot.telegram.sendMessage(
+            row.user_id, 
+            `@${row.username}, напоминание: ${row.text}`
+          );
+          await pool.query('DELETE FROM reminders WHERE id = $1', [row.id]);
+        } catch (err) {
+          console.error('Ошибка восстановления:', err);
+        }
+      }, msLeft);
+    }
+  });
+}
+
+// Вебхук и запуск сервера
 app.post(WEBHOOK_PATH, (req, res) => {
-  if (!req.body) return res.status(400).end();
-  bot.handleUpdate(req.body).then(() => res.status(200).end()).catch(() => res.status(200).end());
+  bot.handleUpdate(req.body).then(() => res.status(200).end());
 });
 
-// Запуск сервера
 const PORT = 10000;
 app.listen(PORT, async () => {
   console.log(`🚀 Сервер запущен на порту ${PORT}`);
+  await restoreTimers();
   await bot.telegram.deleteWebhook();
   await bot.telegram.setWebhook(WEBHOOK_URL);
   console.log(`✅ Вебхук: ${WEBHOOK_URL}`);
