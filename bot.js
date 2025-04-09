@@ -4,7 +4,7 @@ require('dotenv').config();
 
 const app = express();
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const userTimers = new Map(); // Храним таймеры по ID пользователя
+const userTimers = new Map(); // { userId: { timerId: { text, timeout } } }
 
 // Конфигурация
 const WEBHOOK_PATH = '/tg-webhook';
@@ -18,8 +18,7 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.send(`
     <h1>Бот с напоминаниями</h1>
-    <p>Используйте: /5с Текст, /10м Текст, /1ч Текст, /2д Текст</p>
-    <p>Активных таймеров: ${Array.from(userTimers.values()).flat().length}</p>
+    <p>Активных таймеров: ${Array.from(userTimers.values()).reduce((acc, timers) => acc + Object.keys(timers).length, 0)}</p>
   `);
 });
 
@@ -38,51 +37,56 @@ bot.command('start', (ctx) => {
 // Команда /таймеры
 bot.command('таймеры', (ctx) => {
   const userId = ctx.from.id;
-  const timers = userTimers.get(userId) || [];
-  
-  if (timers.length === 0) {
+  const timers = userTimers.get(userId) || {};
+
+  if (Object.keys(timers).length === 0) {
     return ctx.reply('У вас нет активных напоминаний');
   }
-  
-  ctx.reply(`⏱ Ваши активные напоминания: ${timers.length}`);
+
+  const timerList = Object.values(timers).map(t => `⏱ ${t.text}`).join('\n');
+  ctx.reply(`📋 Ваши напоминания:\n${timerList}`);
 });
 
 // Обработчик таймеров
 bot.hears(/^\/(\d+)([сmcчhдd])\s(.+)/i, (ctx) => {
   const userId = ctx.from.id;
+  const username = ctx.from.username;
   const [, amount, unit, text] = ctx.match;
-  
+
   // Конвертация в миллисекунды
-  let milliseconds;
-  switch (unit.toLowerCase()) {
-    case 'с': case 'c': milliseconds = amount * 1000; break;
-    case 'м': case 'm': milliseconds = amount * 60000; break;
-    case 'ч': case 'h': milliseconds = amount * 3600000; break;
-    case 'д': case 'd': milliseconds = amount * 86400000; break;
-    default: return ctx.reply('❌ Неверная единица времени');
+  const units = {
+    'с': 1000, 'c': 1000,
+    'м': 60000, 'm': 60000,
+    'ч': 3600000, 'h': 3600000,
+    'д': 86400000, 'd': 86400000
+  };
+
+  if (!units[unit.toLowerCase()]) {
+    return ctx.reply('❌ Неверная единица времени (используйте: с, м, ч, д)');
   }
 
-  // Инициализация массива таймеров для пользователя
+  const ms = amount * units[unit.toLowerCase()];
+  const timerId = Date.now(); // Уникальный ID для таймера
+
+  // Инициализация хранилища для пользователя
   if (!userTimers.has(userId)) {
-    userTimers.set(userId, []);
+    userTimers.set(userId, {});
   }
 
-  // Создаем новый таймер
-  const timer = setTimeout(() => {
-    ctx.reply(`🔔 Напоминание: ${text}`);
-    
-    // Удаляем таймер из хранилища
-    const userTimersList = userTimers.get(userId);
-    const index = userTimersList.indexOf(timer);
-    if (index !== -1) {
-      userTimersList.splice(index, 1);
+  // Создаем таймер
+  const timeout = setTimeout(async () => {
+    try {
+      await ctx.reply(`@${username}, напоминание: ${text}`);
+    } catch (err) {
+      console.error('Ошибка отправки:', err);
+    } finally {
+      delete userTimers.get(userId)[timerId];
     }
-  }, milliseconds);
+  }, ms);
 
   // Сохраняем таймер
-  userTimers.get(userId).push(timer);
-  
-  ctx.reply(`⏳ Установлено напоминание через ${amount}${unit}: "${text}"`);
+  userTimers.get(userId)[timerId] = { text: `${amount}${unit}: ${text}`, timeout };
+  ctx.reply(`⏳ Напоминание установлено: "${text}" через ${amount}${unit}`);
 });
 
 // Вебхук
@@ -91,7 +95,10 @@ app.post(WEBHOOK_PATH, (req, res) => {
   
   bot.handleUpdate(req.body)
     .then(() => res.status(200).end())
-    .catch(() => res.status(200).end());
+    .catch(err => {
+      console.error('Ошибка обработки:', err);
+      res.status(200).end();
+    });
 });
 
 // Запуск сервера
