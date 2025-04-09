@@ -64,7 +64,7 @@ function createKeyboard(buttons) {
 
   return Markup.keyboard(keyboard)
     .resize()
-    .persistent(); // Клавиатура не будет скрываться
+    .persistent();
 }
 
 // Обработчик таймеров
@@ -74,7 +74,6 @@ bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
   const messageId = ctx.message.message_id;
   const [, amount, unit, text] = ctx.match;
   
-  // Маппинг единиц времени
   const unitMap = { 'с':'с', 'c':'с', 'м':'м', 'm':'м', 'ч':'ч', 'h':'ч', 'д':'д', 'd':'д' };
   const cleanUnit = unitMap[unit.toLowerCase()];
 
@@ -128,14 +127,14 @@ bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
   }
 });
 
-// Команда /timer
+// Команда /timer (исправленная)
 bot.command('timer', async (ctx) => {
   try {
     const reminders = await pool.query(
       `SELECT text, unit, 
-       (end_time - (EXTRACT(EPOCH FROM NOW())*1000)::bigint) as ms_left
+       (end_time - (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint as ms_left
        FROM reminders 
-       WHERE user_id = $1 AND end_time > (EXTRACT(EPOCH FROM NOW())*1000`,
+       WHERE user_id = $1 AND end_time > EXTRACT(EPOCH FROM NOW()) * 1000`,
       [ctx.from.id]
     );
     
@@ -223,26 +222,25 @@ Object.keys(keyboardCommands).forEach(command => {
   });
 });
 
-// Обработчик нажатий кнопок (без сообщений)
+// Обработчик нажатий кнопок (полностью молчащий)
 bot.on('text', async (ctx) => {
+  // Игнорируем команды
   if (ctx.message.text.startsWith('/')) return;
   
   try {
-    let buttons;
-    
     // Проверяем активную клавиатуру
     if (activeKeyboards.has(ctx.from.id)) {
-      buttons = activeKeyboards.get(ctx.from.id);
-    } 
-    // Проверяем сохранённую клавиатуру
-    else {
-      const res = await pool.query('SELECT buttons FROM user_keyboards WHERE user_id = $1', [ctx.from.id]);
-      if (res.rows.length === 0) return;
-      buttons = res.rows[0].buttons;
+      const buttons = activeKeyboards.get(ctx.from.id);
+      if (buttons.includes(ctx.message.text)) {
+        // Ничего не делаем - просто игнорируем нажатие
+        return;
+      }
     }
     
-    if (buttons.includes(ctx.message.text)) {
-      // Ничего не делаем, просто сохраняем клавиатуру
+    // Проверяем сохранённую клавиатуру
+    const res = await pool.query('SELECT buttons FROM user_keyboards WHERE user_id = $1', [ctx.from.id]);
+    if (res.rows.length > 0 && res.rows[0].buttons.includes(ctx.message.text)) {
+      // Ничего не делаем - просто игнорируем нажатие
       return;
     }
   } catch (err) {
