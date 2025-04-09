@@ -12,6 +12,10 @@ const DOMAIN = process.env.RENDER_EXTERNAL_URL || process.env.DOMAIN;
 const PORT = process.env.PORT || 10000;
 const WEBHOOK_URL = `https://${DOMAIN.replace(/^https?:\/\//, '')}${WEBHOOK_PATH}`;
 
+// Настройки админа
+const ADMINS = ['squezzy00']; // Ваш username
+const disabledCommands = new Set(); // Хранилище отключенных команд
+
 // Подключение к PostgreSQL
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -32,16 +36,22 @@ const pool = new Pool({
         unit TEXT NOT NULL
       )
     `);
-    console.log('✅ Таблица напоминаний готова');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_keyboards (
+        user_id BIGINT PRIMARY KEY,
+        buttons TEXT[] NOT NULL DEFAULT '{}'
+      )
+    `);
+    console.log('✅ Таблицы БД готовы');
   } catch (err) {
-    console.error('❌ Ошибка создания таблицы:', err);
+    console.error('❌ Ошибка создания таблиц:', err);
   }
 })();
 
 // Хранилище клавиатур
 const activeKeyboards = new Map();
 
-// Функция для создания клавиатуры
+// Функция для создания клавиатуры (4 кнопки в ряду)
 function createKeyboard(buttons) {
   const keyboard = [];
   const buttonsPerRow = Math.min(4, buttons.length);
@@ -55,6 +65,48 @@ function createKeyboard(buttons) {
     .persistent();
 }
 
+// Проверка прав администратора
+function isAdmin(ctx) {
+  return ADMINS.includes(ctx.from.username);
+}
+
+// Команда управления командами (только для админа)
+bot.command('cmd', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    return ctx.reply('❌ Только админы могут использовать эту команду');
+  }
+
+  const args = ctx.message.text.split(' ').slice(1);
+  if (args.length < 2) {
+    return ctx.reply('Использование: /cmd [enable|disable] [команда]\nПример: /cmd disable timer');
+  }
+
+  const [action, command] = args;
+  const cleanCommand = command.replace(/^\//, '').toLowerCase();
+
+  if (action === 'disable') {
+    disabledCommands.add(cleanCommand);
+    ctx.reply(`✅ Команда /${cleanCommand} отключена`);
+  } else if (action === 'enable') {
+    disabledCommands.delete(cleanCommand);
+    ctx.reply(`✅ Команда /${cleanCommand} включена`);
+  } else {
+    ctx.reply('❌ Неверное действие. Используйте enable или disable');
+  }
+});
+
+// Обработчик всех команд (проверка отключенных команд)
+bot.use(async (ctx, next) => {
+  if (ctx.message && ctx.message.text && ctx.message.text.startsWith('/')) {
+    const command = ctx.message.text.split(' ')[0].slice(1).toLowerCase();
+    
+    if (disabledCommands.has(command) && !isAdmin(ctx)) {
+      return ctx.reply(`❌ Команда /${command} временно отключена`);
+    }
+  }
+  return next();
+});
+
 // Команда /start
 bot.command('start', (ctx) => {
   ctx.replyWithHTML(`👋 <b>Привет, ${ctx.from.first_name}!</b>\n\nИспользуй /help для списка команд`);
@@ -62,7 +114,7 @@ bot.command('start', (ctx) => {
 
 // Команда /help
 bot.command('help', (ctx) => {
-  ctx.replyWithHTML(`
+  const helpText = `
 <b>📋 Команды:</b>
 /set кнопка1,кнопка2 - установить клавиатуру
 /see кнопка1,кнопка2 - временная клавиатура
@@ -70,7 +122,9 @@ bot.command('help', (ctx) => {
 /stop - убрать клавиатуру
 /5с текст - напомнить через 5 секунд
 /timer - активные напоминания
-  `);
+${isAdmin(ctx) ? '\n<b>👑 Админ-команды:</b>\n/cmd [enable|disable] [команда] - управление командами' : ''}
+  `;
+  ctx.replyWithHTML(helpText);
 });
 
 // Обработчик таймеров
@@ -251,12 +305,4 @@ app.get('/', (req, res) => {
 
 // Запуск сервера
 app.listen(PORT, async () => {
-  console.log(`🚀 Сервер запущен на порту ${PORT}`);
-  try {
-    await bot.telegram.deleteWebhook();
-    await bot.telegram.setWebhook(WEBHOOK_URL);
-    console.log(`✅ Вебхук установлен: ${WEBHOOK_URL}`);
-  } catch (err) {
-    console.error('❌ Ошибка вебхука:', err);
-  }
-});
+  console.log
