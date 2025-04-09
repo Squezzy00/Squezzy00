@@ -166,6 +166,29 @@ app.post(WEBHOOK_PATH, (req, res) => {
   });
 });
 
+// Обработчик главной страницы
+app.get('/', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Telegram Bot Status</title>
+      <meta charset="UTF-8">
+      <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+        h1 { color: #0088cc; }
+        .status { font-size: 1.2em; margin: 20px 0; }
+      </style>
+    </head>
+    <body>
+      <h1>🤖 Telegram Bot</h1>
+      <div class="status">Бот работает и готов к работе!</div>
+      <div>Webhook: <code>${WEBHOOK_URL}</code></div>
+    </body>
+    </html>
+  `);
+});
+
 // Запуск сервера
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, async () => {
