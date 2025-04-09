@@ -6,18 +6,16 @@ require('dotenv').config();
 const app = express();
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Конфигурация вебхука
+// Конфигурация
 const WEBHOOK_PATH = '/tg-webhook';
-const DOMAIN = process.env.RENDER_EXTERNAL_URL || process.env.DOMAIN || 'your-domain.onrender.com';
+const DOMAIN = process.env.RENDER_EXTERNAL_URL || process.env.DOMAIN;
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_URL = `https://${DOMAIN.replace(/^https?:\/\//, '')}${WEBHOOK_PATH}`;
 
 // Подключение к PostgreSQL
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { 
-    rejectUnauthorized: false 
-  }
+  ssl: { rejectUnauthorized: false }
 });
 
 // Создание таблиц
@@ -39,7 +37,8 @@ const pool = new Pool({
       CREATE TABLE IF NOT EXISTS reminders (
         id SERIAL PRIMARY KEY,
         user_id BIGINT NOT NULL,
-        username TEXT,
+        chat_id BIGINT NOT NULL,
+        message_id BIGINT,
         text TEXT NOT NULL,
         end_time BIGINT NOT NULL,
         unit TEXT NOT NULL
@@ -51,39 +50,33 @@ const pool = new Pool({
   }
 })();
 
-// Хранилище временных клавиатур
+// Хранилище клавиатур
 const activeKeyboards = new Map();
 
 // Функция для создания клавиатуры
-function createSmartKeyboard(buttons) {
-  const MAX_BUTTONS_PER_ROW = 3;
+function createKeyboard(buttons) {
   const keyboard = [];
+  const buttonsPerRow = buttons.length <= 3 ? buttons.length : 3;
   
-  for (let i = 0; i < buttons.length; i += MAX_BUTTONS_PER_ROW) {
-    const row = buttons.slice(i, i + MAX_BUTTONS_PER_ROW);
-    keyboard.push(row.map(text => Markup.button.text(text)));
+  for (let i = 0; i < buttons.length; i += buttonsPerRow) {
+    keyboard.push(buttons.slice(i, i + buttonsPerRow).map(text => Markup.button.text(text)));
   }
 
   return Markup.keyboard(keyboard)
     .resize()
-    .persistent(); // Клавиатура не будет скрываться после нажатия
+    .persistent(); // Клавиатура не будет скрываться
 }
 
-// Команда /start и /help остаются без изменений...
-
-// Обработчик таймеров с русскими буквами
+// Обработчик таймеров
 bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
   const userId = ctx.from.id;
-  const username = ctx.from.username || ctx.from.first_name;
+  const chatId = ctx.chat.id;
+  const messageId = ctx.message.message_id;
   const [, amount, unit, text] = ctx.match;
   
-  // Маппинг русских и английских букв
+  // Маппинг единиц времени
   const unitMap = { 'с':'с', 'c':'с', 'м':'м', 'm':'м', 'ч':'ч', 'h':'ч', 'д':'д', 'd':'д' };
   const cleanUnit = unitMap[unit.toLowerCase()];
-
-  if (!cleanUnit) {
-    return ctx.reply('Неправильный формат времени. Используйте: /5с, /10м, /1ч, /2д');
-  }
 
   const ms = {
     'с': amount * 1000,
@@ -96,17 +89,24 @@ bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
 
   try {
     await pool.query(
-      'INSERT INTO reminders (user_id, username, text, end_time, unit) VALUES ($1, $2, $3, $4, $5)',
-      [userId, username, text, endTime, cleanUnit]
+      `INSERT INTO reminders (user_id, chat_id, message_id, text, end_time, unit) 
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [userId, chatId, messageId, text, endTime, cleanUnit]
     );
 
     setTimeout(async () => {
       try {
-        await ctx.reply(`🔔 Напоминание: ${text}`);
-        await pool.query('DELETE FROM reminders WHERE user_id = $1 AND text = $2 AND end_time = $3', 
-          [userId, text, endTime]);
+        await ctx.telegram.sendMessage(
+          chatId, 
+          `🔔 @${ctx.from.username || ctx.from.first_name}, напоминание: ${text}`,
+          { reply_to_message_id: messageId }
+        );
+        await pool.query(
+          'DELETE FROM reminders WHERE user_id = $1 AND chat_id = $2 AND message_id = $3',
+          [userId, chatId, messageId]
+        );
       } catch (err) {
-        console.error('Ошибка при отправке напоминания:', err);
+        console.error('Ошибка напоминания:', err);
       }
     }, ms);
 
@@ -117,51 +117,129 @@ bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
   }
 });
 
-// Обработчик нажатий на кнопки
-bot.on('text', async (ctx) => {
-  // Если это команда - пропускаем
-  if (ctx.message.text.startsWith('/')) return;
+// Обработчик команд клавиатуры
+bot.command(['start', 'help', 'set', 'see', 'open', 'stop', 'del', 'timer', 'cfg'], async (ctx) => {
+  const command = ctx.message.text.split(' ')[0].slice(1);
   
-  // Проверяем, есть ли активная клавиатура у пользователя
-  if (activeKeyboards.has(ctx.from.id)) {
-    const buttons = activeKeyboards.get(ctx.from.id);
-    if (buttons.includes(ctx.message.text)) {
-      // Кнопка нажата - клавиатура остается
-      return ctx.reply(`Вы нажали: ${ctx.message.text}`, {
-        reply_markup: createSmartKeyboard(buttons).reply_markup
-      });
-    }
-  }
-  
-  // Проверяем персональную клавиатуру
   try {
-    const res = await pool.query('SELECT buttons FROM user_keyboards WHERE user_id = $1', [ctx.from.id]);
-    if (res.rows.length > 0 && res.rows[0].buttons.includes(ctx.message.text)) {
-      return ctx.reply(`Вы нажали: ${ctx.message.text}`, {
-        reply_markup: createSmartKeyboard(res.rows[0].buttons).reply_markup
-      });
+    switch(command) {
+      case 'start':
+        await ctx.replyWithHTML(`👋 <b>Привет, ${ctx.from.first_name}!</b>\n\nИспользуй /help для списка команд`);
+        break;
+        
+      case 'help':
+        await ctx.replyWithHTML(`
+<b>📋 Команды:</b>
+/set кнопка1,кнопка2 - установить клавиатуру
+/see кнопка1,кнопка2 - временная клавиатура
+/open - показать клавиатуру
+/stop - убрать клавиатуру
+/5с текст - напомнить через 5 секунд
+/timer - активные напоминания
+        `);
+        break;
+        
+      case 'set':
+        const setButtons = ctx.message.text.split(' ').slice(1).join(' ').split(',').map(b => b.trim());
+        if (setButtons.length === 0) throw new Error('Нет кнопок');
+        
+        await pool.query(
+          `INSERT INTO user_keyboards (user_id, buttons) VALUES ($1, $2)
+           ON CONFLICT (user_id) DO UPDATE SET buttons = $2`,
+          [ctx.from.id, setButtons]
+        );
+        await ctx.reply('✅ Клавиатура сохранена', createKeyboard(setButtons));
+        break;
+        
+      case 'see':
+        const seeButtons = ctx.message.text.split(' ').slice(1).join(' ').split(',').map(b => b.trim());
+        if (seeButtons.length === 0) throw new Error('Нет кнопок');
+        
+        activeKeyboards.set(ctx.from.id, seeButtons);
+        await ctx.reply('⌛ Временная клавиатура', createKeyboard(seeButtons));
+        break;
+        
+      case 'open':
+        if (activeKeyboards.has(ctx.from.id)) {
+          return ctx.reply('Ваша клавиатура', createKeyboard(activeKeyboards.get(ctx.from.id)));
+        }
+        
+        const res = await pool.query('SELECT buttons FROM user_keyboards WHERE user_id = $1', [ctx.from.id]);
+        if (res.rows.length > 0) {
+          return ctx.reply('Ваша клавиатура', createKeyboard(res.rows[0].buttons));
+        }
+        
+        await ctx.reply('У вас нет сохранённой клавиатуры');
+        break;
+        
+      case 'stop':
+        activeKeyboards.delete(ctx.from.id);
+        await ctx.reply('🗑 Клавиатура удалена', Markup.removeKeyboard());
+        break;
+        
+      case 'timer':
+        const reminders = await pool.query(
+          `SELECT text, unit, 
+           (end_time - EXTRACT(EPOCH FROM NOW())*1000 AS ms_left
+           FROM reminders 
+           WHERE user_id = $1 AND end_time > EXTRACT(EPOCH FROM NOW())*1000`,
+          [ctx.from.id]
+        );
+        
+        if (reminders.rows.length === 0) {
+          return ctx.reply('Нет активных напоминаний');
+        }
+        
+        const list = reminders.rows.map(r => 
+          `⏱ ${r.text} (осталось: ${Math.ceil(r.ms_left/1000)}${r.unit})`
+        ).join('\n');
+        
+        await ctx.reply(`📋 Напоминания:\n${list}`);
+        break;
+        
+      default:
+        await ctx.reply('Неизвестная команда');
     }
   } catch (err) {
-    console.error('Ошибка БД:', err);
+    console.error(`Ошибка команды /${command}:`, err);
+    await ctx.reply(`Ошибка выполнения: ${err.message}`);
   }
 });
 
-// Все остальные команды (/set, /see, /open, /stop, /del, /timer, /cfg) остаются без изменений,
-// но везде где создается клавиатура используем createSmartKeyboard()
+// Обработчик нажатий кнопок
+bot.on('text', async (ctx) => {
+  if (ctx.message.text.startsWith('/')) return;
+  
+  try {
+    // Проверяем активную клавиатуру
+    if (activeKeyboards.has(ctx.from.id)) {
+      const buttons = activeKeyboards.get(ctx.from.id);
+      if (buttons.includes(ctx.message.text)) {
+        return ctx.reply(`Вы нажали: ${ctx.message.text}`, createKeyboard(buttons));
+      }
+    }
+    
+    // Проверяем сохранённую клавиатуру
+    const res = await pool.query('SELECT buttons FROM user_keyboards WHERE user_id = $1', [ctx.from.id]);
+    if (res.rows.length > 0 && res.rows[0].buttons.includes(ctx.message.text)) {
+      return ctx.reply(`Вы нажали: ${ctx.message.text}`, createKeyboard(res.rows[0].buttons));
+    }
+  } catch (err) {
+    console.error('Ошибка обработки кнопки:', err);
+  }
+});
 
-// Настройка вебхука и запуск сервера
+// Настройка вебхука
 app.use(express.json());
 app.post(WEBHOOK_PATH, (req, res) => {
-  bot.handleUpdate(req.body, res).catch(err => {
-    console.error('Webhook error:', err);
-    res.status(200).end();
-  });
+  bot.handleUpdate(req.body, res);
 });
 
 app.get('/', (req, res) => {
   res.send('Бот работает!');
 });
 
+// Запуск сервера
 app.listen(PORT, async () => {
   console.log(`🚀 Сервер запущен на порту ${PORT}`);
   try {
