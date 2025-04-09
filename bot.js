@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 // Конфигурация
 const WEBHOOK_PATH = '/tg-webhook';
 const DOMAIN = process.env.RENDER_EXTERNAL_URL || process.env.DOMAIN;
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 const WEBHOOK_URL = `https://${DOMAIN.replace(/^https?:\/\//, '')}${WEBHOOK_PATH}`;
 
 // Подключение к PostgreSQL
@@ -18,7 +18,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Создание таблиц
+// Создание таблицы reminders с правильной структурой
 (async () => {
   try {
     await pool.query(`
@@ -34,11 +34,12 @@ const pool = new Pool({
     `);
     console.log('✅ Таблица напоминаний готова');
   } catch (err) {
-    console.error('❌ Ошибка создания таблиц:', err);
+    console.error('❌ Ошибка создания таблицы:', err);
+    process.exit(1);
   }
 })();
 
-// Обработчик таймеров (полностью переработанный)
+// Обработчик таймеров
 bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
   const userId = ctx.from.id;
   const chatId = ctx.chat.id;
@@ -77,6 +78,22 @@ bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
   const endTime = Date.now() + ms;
 
   try {
+    // Удаляем старую таблицу, если она существует с неправильной структурой
+    await pool.query('DROP TABLE IF EXISTS reminders CASCADE');
+    
+    // Создаем таблицу заново с правильной структурой
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS reminders (
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL,
+        chat_id BIGINT NOT NULL,
+        message_id BIGINT,
+        text TEXT NOT NULL,
+        end_time BIGINT NOT NULL,
+        unit TEXT NOT NULL
+      )
+    `);
+
     // Сохраняем напоминание в БД
     await pool.query(
       `INSERT INTO reminders 
@@ -115,7 +132,7 @@ bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
   }
 });
 
-// Команда /timer (исправленная)
+// Команда /timer
 bot.command('timer', async (ctx) => {
   try {
     const res = await pool.query(
