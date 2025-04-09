@@ -15,7 +15,6 @@ const WEBHOOK_URL = `https://${DOMAIN.replace(/^https?:\/\//, '')}${WEBHOOK_PATH
 // Настройки админа
 const ADMINS = [5005387093]; // Ваш user_id
 const disabledCommands = new Set();
-const userStates = new Map();
 
 // Подключение к PostgreSQL
 const pool = new Pool({
@@ -23,21 +22,37 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Инициализация БД
+// Инициализация БД с автоматическим созданием таблиц и колонок
 (async () => {
   try {
+    // Создаем таблицы, если они не существуют
     await pool.query(`
       CREATE TABLE IF NOT EXISTS disabled_commands (
         command TEXT PRIMARY KEY
       )
     `);
+    
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_keyboards (
         user_id BIGINT PRIMARY KEY,
-        buttons TEXT[] NOT NULL DEFAULT '{}',
-        keyboard_hidden BOOLEAN DEFAULT FALSE
+        buttons TEXT[] NOT NULL DEFAULT '{}'
       )
     `);
+    
+    // Проверяем и добавляем столбец keyboard_hidden если его нет
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name='user_keyboards' AND column_name='keyboard_hidden'
+        ) THEN
+          ALTER TABLE user_keyboards ADD COLUMN keyboard_hidden BOOLEAN DEFAULT FALSE;
+        END IF;
+      END $$;
+    `);
+    
     await pool.query(`
       CREATE TABLE IF NOT EXISTS reminders (
         id SERIAL PRIMARY KEY,
@@ -53,9 +68,10 @@ const pool = new Pool({
     // Загружаем отключенные команды
     const res = await pool.query('SELECT command FROM disabled_commands');
     res.rows.forEach(row => disabledCommands.add(row.command));
-    console.log('✅ БД готова');
+    console.log('✅ БД полностью готова');
   } catch (err) {
-    console.error('❌ Ошибка БД:', err);
+    console.error('❌ Ошибка инициализации БД:', err);
+    process.exit(1);
   }
 })();
 
@@ -80,7 +96,7 @@ async function enableCommand(command) {
   await pool.query('DELETE FROM disabled_commands WHERE command = $1', [command]);
 }
 
-// Состояние клавиатуры
+// Работа с клавиатурой
 async function getKeyboardState(userId) {
   const res = await pool.query(
     'SELECT buttons, keyboard_hidden FROM user_keyboards WHERE user_id = $1', 
@@ -91,8 +107,9 @@ async function getKeyboardState(userId) {
 
 async function updateKeyboardState(userId, hidden) {
   await pool.query(
-    'UPDATE user_keyboards SET keyboard_hidden = $1 WHERE user_id = $2',
-    [hidden, userId]
+    'INSERT INTO user_keyboards (user_id, keyboard_hidden) VALUES ($1, $2) ' +
+    'ON CONFLICT (user_id) DO UPDATE SET keyboard_hidden = $2',
+    [userId, hidden]
   );
 }
 
@@ -107,9 +124,9 @@ function createKeyboard(buttons, isHidden) {
   const rowSize = Math.min(4, buttons.length);
   
   for (let i = 0; i < buttons.length; i += rowSize) {
-    keyboard.push(buttons.slice(i, i + rowSize));
+    keyboard.push(buttons.slice(i, i + rowSize).map(text => Markup.button.text(text)));
   }
-  keyboard.push(['📋 Скрыть клавиатуру']);
+  keyboard.push([Markup.button.text('📋 Скрыть клавиатуру')]);
   
   return Markup.keyboard(keyboard).resize();
 }
@@ -120,7 +137,7 @@ function createKeyboard(buttons, isHidden) {
 function commandHandler(command, handler) {
   bot.command(command, async (ctx) => {
     if (disabledCommands.has(command) && !isAdmin(ctx)) {
-      return ctx.reply(`❌ Команда /${command} отключена`);
+      return ctx.reply(`❌ Команда /${command} отключена администратором`);
     }
     return handler(ctx);
   });
@@ -178,6 +195,7 @@ commandHandler('set', async (ctx) => {
     await updateKeyboardState(ctx.from.id, false);
     ctx.reply('✅ Клавиатура сохранена', createKeyboard(buttons, false));
   } catch (err) {
+    console.error('Ошибка /set:', err);
     ctx.reply('❌ Ошибка сохранения');
   }
 });
@@ -186,18 +204,41 @@ commandHandler('see', async (ctx) => {
   const buttons = ctx.message.text.split(' ').slice(1).join(' ').split(',').map(b => b.trim());
   if (buttons.length === 0) return ctx.reply('Укажите кнопки через запятую');
 
-  userStates.set(ctx.from.id, { buttons, keyboardHidden: false });
-  ctx.reply('⌛ Временная клавиатура', createKeyboard(buttons, false));
+  try {
+    await pool.query(
+      `INSERT INTO user_keyboards (user_id, buttons, keyboard_hidden) 
+       VALUES ($1, $2, FALSE)
+       ON CONFLICT (user_id) DO UPDATE SET buttons = $2, keyboard_hidden = FALSE`,
+      [ctx.from.id, buttons]
+    );
+    ctx.reply('⌛ Временная клавиатура', createKeyboard(buttons, false));
+  } catch (err) {
+    console.error('Ошибка /see:', err);
+    ctx.reply('❌ Ошибка создания клавиатуры');
+  }
 });
 
 commandHandler('open', async (ctx) => {
-  const { buttons, keyboard_hidden } = await getKeyboardState(ctx.from.id);
-  if (buttons.length === 0) return ctx.reply('❌ Нет сохранённой клавиатуры');
-  ctx.reply('Ваша клавиатура', createKeyboard(buttons, keyboard_hidden));
+  try {
+    const { buttons, keyboard_hidden } = await getKeyboardState(ctx.from.id);
+    if (!buttons || buttons.length === 0) {
+      return ctx.reply('❌ Нет сохранённой клавиатуры');
+    }
+    ctx.reply('Ваша клавиатура', createKeyboard(buttons, keyboard_hidden));
+  } catch (err) {
+    console.error('Ошибка /open:', err);
+    ctx.reply('❌ Ошибка загрузки клавиатуры');
+  }
 });
 
-commandHandler('stop', (ctx) => {
-  ctx.reply('🗑 Клавиатура удалена', Markup.removeKeyboard());
+commandHandler('stop', async (ctx) => {
+  try {
+    await updateKeyboardState(ctx.from.id, true);
+    ctx.reply('🗑 Клавиатура удалена', Markup.removeKeyboard());
+  } catch (err) {
+    console.error('Ошибка /stop:', err);
+    ctx.reply('❌ Ошибка удаления клавиатуры');
+  }
 });
 
 commandHandler('timer', async (ctx) => {
@@ -215,14 +256,15 @@ commandHandler('timer', async (ctx) => {
     ).join('\n');
     ctx.reply(`📋 Ваши напоминания:\n${list}`);
   } catch (err) {
-    ctx.reply('❌ Ошибка загрузки');
+    console.error('Ошибка /timer:', err);
+    ctx.reply('❌ Ошибка загрузки напоминаний');
   }
 });
 
 // Обработчик таймеров (/5с, /10м и т.д.)
 bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
   if (disabledCommands.has('reminder') && !isAdmin(ctx)) {
-    return ctx.reply('❌ Напоминания отключены');
+    return ctx.reply('❌ Напоминания временно отключены');
   }
 
   const [, amount, unit, text] = ctx.match;
@@ -244,41 +286,44 @@ bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
     );
 
     setTimeout(async () => {
-      await ctx.reply(`🔔 Напоминание: ${text}`);
-      await pool.query(
-        'DELETE FROM reminders WHERE message_id = $1',
-        [ctx.message.message_id]
-      );
+      try {
+        await ctx.reply(`🔔 Напоминание: ${text}`);
+        await pool.query(
+          'DELETE FROM reminders WHERE message_id = $1',
+          [ctx.message.message_id]
+        );
+      } catch (err) {
+        console.error('Ошибка отправки напоминания:', err);
+      }
     }, ms);
 
     ctx.reply(`⏳ Напоминание через ${amount}${cleanUnit}: "${text}"`);
   } catch (err) {
+    console.error('Ошибка создания напоминания:', err);
     ctx.reply('❌ Ошибка создания напоминания');
   }
 });
 
 // Управление клавиатурой
 bot.hears(['📋 Скрыть клавиатуру', '📋 Показать клавиатуру'], async (ctx) => {
-  const userId = ctx.from.id;
-  let buttons = [];
-  
-  const kbState = await getKeyboardState(userId);
-  const newState = !kbState.keyboard_hidden;
-  
-  if (userStates.has(userId)) {
-    buttons = userStates.get(userId).buttons;
-  } else if (kbState.buttons) {
-    buttons = kbState.buttons;
+  try {
+    const userId = ctx.from.id;
+    const { buttons, keyboard_hidden } = await getKeyboardState(userId);
+    const newState = !keyboard_hidden;
+    
+    await updateKeyboardState(userId, newState);
+    ctx.reply(
+      newState ? 'Клавиатура скрыта' : 'Клавиатура активна',
+      createKeyboard(buttons, newState)
+    );
+  } catch (err) {
+    console.error('Ошибка управления клавиатурой:', err);
+    ctx.reply('❌ Ошибка изменения состояния клавиатуры');
   }
-
-  await updateKeyboardState(userId, newState);
-  ctx.reply(
-    newState ? 'Клавиатура скрыта' : 'Клавиатура активна',
-    createKeyboard(buttons, newState)
-  );
 });
 
-// ==================== ЗАПУСК ====================
+// ==================== ЗАПУСК СЕРВЕРА ====================
+
 app.use(express.json());
 app.post(WEBHOOK_PATH, (req, res) => {
   bot.handleUpdate(req.body, res);
@@ -286,7 +331,11 @@ app.post(WEBHOOK_PATH, (req, res) => {
 
 app.listen(PORT, async () => {
   console.log(`🚀 Сервер запущен на порту ${PORT}`);
-  await bot.telegram.deleteWebhook();
-  await bot.telegram.setWebhook(WEBHOOK_URL);
-  console.log(`✅ Вебхук: ${WEBHOOK_URL}`);
+  try {
+    await bot.telegram.deleteWebhook();
+    await bot.telegram.setWebhook(WEBHOOK_URL);
+    console.log(`✅ Вебхук установлен: ${WEBHOOK_URL}`);
+  } catch (err) {
+    console.error('❌ Ошибка вебхука:', err);
+  }
 });
