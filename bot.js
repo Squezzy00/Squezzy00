@@ -44,7 +44,7 @@ const activeKeyboards = new Map();
 // Функция для создания клавиатуры
 function createKeyboard(buttons) {
   const keyboard = [];
-  const buttonsPerRow = Math.min(3, buttons.length);
+  const buttonsPerRow = Math.min(4, buttons.length);
   
   for (let i = 0; i < buttons.length; i += buttonsPerRow) {
     keyboard.push(buttons.slice(i, i + buttonsPerRow).map(text => Markup.button.text(text)));
