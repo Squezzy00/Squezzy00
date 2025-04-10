@@ -5,221 +5,191 @@ const express = require('express');
 const app = express();
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const pool = new Pool();
+const activeKeyboards = new Map();
 
 // Константы
-const OWNER_ID = 5005387093; // Ваш ID владельца
+const OWNER_ID = 5005387093;
 
-// Проверка подключения к БД
-async function checkDB() {
-  try {
-    await pool.query('SELECT 1');
-    console.log('✅ Подключение к БД успешно');
-  } catch (err) {
-    console.error('❌ Ошибка подключения к БД:', err);
-    process.exit(1);
-  }
+// Инициализация БД
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      user_id BIGINT PRIMARY KEY,
+      username TEXT,
+      nickname TEXT,
+      universal_id SERIAL,
+      is_premium BOOLEAN DEFAULT FALSE,
+      is_banned BOOLEAN DEFAULT FALSE,
+      is_admin BOOLEAN DEFAULT FALSE,
+      banner_file_id TEXT
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_keyboards (
+      user_id BIGINT PRIMARY KEY,
+      buttons TEXT[] NOT NULL DEFAULT '{}'
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reminders (
+      id SERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL,
+      text TEXT NOT NULL,
+      end_time BIGINT NOT NULL
+    )
+  `);
 }
 
-// Middleware для проверки бана
-bot.use(async (ctx, next) => {
-  if (ctx.from) {
-    const user = await pool.query('SELECT is_banned FROM users WHERE user_id = $1', [ctx.from.id]);
-    if (user.rows.length > 0 && user.rows[0].is_banned) {
-      return ctx.reply('🚫 Вы заблокированы в этом боте');
-    }
-  }
-  return next();
-});
+// Команда /set (клавиатура)
+bot.command('set', async (ctx) => {
+  const buttons = ctx.message.text.split(' ').slice(1).join(' ').split(',').map(b => b.trim());
+  if (!buttons.length) return ctx.reply('Используйте: /set кнопка1,кнопка2');
 
-// Команда /start
-bot.command('start', async (ctx) => {
   try {
     await pool.query(`
-      INSERT INTO users (user_id, username) 
-      VALUES ($1, $2) 
-      ON CONFLICT (user_id) DO UPDATE SET username = $2`,
-      [ctx.from.id, ctx.from.username]
+      INSERT INTO user_keyboards (user_id, buttons) VALUES ($1, $2)
+      ON CONFLICT (user_id) DO UPDATE SET buttons = $2`,
+      [ctx.from.id, buttons]
     );
-    
-    ctx.replyWithHTML(`
-<b>👋 Привет, ${ctx.from.first_name}!</b>
-
-Я вспомогательный бот с возможностью установки таймеров и созданием кнопок.
-
-Используй /help для списка команд
-    `);
+    ctx.reply('✅ Клавиатура сохранена!', Markup.keyboard(buttons).resize());
   } catch (err) {
-    console.error('Ошибка /start:', err);
-    ctx.reply('❌ Произошла ошибка');
+    console.error('Ошибка /set:', err);
+    ctx.reply('❌ Ошибка сохранения');
   }
 });
 
-// Команда /profile
-bot.command('profile', async (ctx) => {
+// Команда /see (временная клавиатура)
+bot.command('see', async (ctx) => {
+  const buttons = ctx.message.text.split(' ').slice(1).join(' ').split(',').map(b => b.trim());
+  if (!buttons.length) return ctx.reply('Используйте: /see кнопка1,кнопка2');
+
+  activeKeyboards.set(ctx.from.id, buttons);
+  ctx.reply('⌛ Временная клавиатура:', Markup.keyboard(buttons).oneTime());
+});
+
+// Команда /open (показать клавиатуру)
+bot.command('open', async (ctx) => {
   try {
-    const user = await pool.query(`
-      SELECT universal_id, nickname, is_premium, is_admin 
-      FROM users 
-      WHERE user_id = $1`,
-      [ctx.from.id]
+    if (activeKeyboards.has(ctx.from.id)) {
+      const buttons = activeKeyboards.get(ctx.from.id);
+      return ctx.reply('Ваша клавиатура:', Markup.keyboard(buttons).resize());
+    }
+
+    const userKb = await pool.query('SELECT buttons FROM user_keyboards WHERE user_id = $1', [ctx.from.id]);
+    if (userKb.rows.length) {
+      return ctx.reply('Ваша клавиатура:', Markup.keyboard(userKb.rows[0].buttons).resize());
+    }
+
+    ctx.reply('ℹ️ Нет сохранённых клавиатур');
+  } catch (err) {
+    console.error('Ошибка /open:', err);
+    ctx.reply('❌ Ошибка загрузки');
+  }
+});
+
+// Команда /stop (убрать клавиатуру)
+bot.command('stop', (ctx) => {
+  activeKeyboards.delete(ctx.from.id);
+  ctx.reply('🗑 Клавиатура удалена', Markup.removeKeyboard());
+});
+
+// Команда /timer (напоминания)
+bot.command('timer', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1);
+  if (args.length < 3) return ctx.reply('Используйте: /timer время(мин) текст');
+
+  const minutes = parseInt(args[0]);
+  if (isNaN(minutes)) return ctx.reply('❌ Укажите число минут');
+
+  const text = args.slice(1).join(' ');
+  const endTime = Date.now() + minutes * 60000;
+
+  try {
+    await pool.query(`
+      INSERT INTO reminders (user_id, text, end_time)
+      VALUES ($1, $2, $3)`,
+      [ctx.from.id, text, Math.floor(endTime / 1000)]
     );
+    ctx.reply(`⏰ Напоминание установлено на ${new Date(endTime).toLocaleTimeString()}`);
+  } catch (err) {
+    console.error('Ошибка /timer:', err);
+    ctx.reply('❌ Ошибка установки таймера');
+  }
+});
+
+// Проверка напоминаний
+setInterval(async () => {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const reminders = await pool.query('SELECT * FROM reminders WHERE end_time <= $1', [now]);
     
-    if (user.rows.length === 0) return ctx.reply('❌ Профиль не найден');
-
-    const profileText = `
-<blockquote><b>Профиль пользователя</b></blockquote>
-
-<blockquote><b>ID:</b> <i>${user.rows[0].universal_id}</i></blockquote>
-
-<blockquote><b>Ник:</b> <i>${user.rows[0].nickname || 'Не установлен'}</i></blockquote>
-
-<blockquote><b>Статус:</b> <i>${user.rows[0].is_admin ? 'Админ' : 'Пользователь'}</i></blockquote>
-
-<blockquote><b>Премиум:</b> <i>${user.rows[0].is_premium ? 'Да' : 'Нет'}</i></blockquote>
-    `;
-
-    ctx.replyWithHTML(profileText);
+    for (const rem of reminders.rows) {
+      await bot.telegram.sendMessage(rem.user_id, `🔔 Напоминание: ${rem.text}`);
+      await pool.query('DELETE FROM reminders WHERE id = $1', [rem.id]);
+    }
   } catch (err) {
-    console.error('Ошибка /profile:', err);
-    ctx.reply('❌ Ошибка загрузки профиля');
+    console.error('Ошибка проверки таймеров:', err);
   }
+}, 60000);
+
+// Команда /setbanner
+bot.command('setbanner', async (ctx) => {
+  ctx.reply('Отправьте фото в ответ на это сообщение для установки баннера');
 });
 
-// Команда /ban
-bot.command('ban', async (ctx) => {
-  if (!await isAdmin(ctx)) return;
-  
-  const args = ctx.message.text.split(' ');
-  if (args.length < 2) return ctx.reply('Используйте: /ban ID_пользователя');
-  
-  const targetId = await getUserIdByUniversalId(parseInt(args[1]));
-  if (!targetId) return ctx.reply('❌ Пользователь не найден');
-  
-  try {
-    await pool.query('UPDATE users SET is_banned = TRUE WHERE user_id = $1', [targetId]);
-    ctx.reply(`✅ Пользователь ${targetId} забанен`);
-  } catch (err) {
-    console.error('Ошибка /ban:', err);
-    ctx.reply('❌ Ошибка бана');
-  }
-});
-
-// Команда /unban
-bot.command('unban', async (ctx) => {
-  if (!await isAdmin(ctx)) return;
-  
-  const args = ctx.message.text.split(' ');
-  if (args.length < 2) return ctx.reply('Используйте: /unban ID_пользователя');
-  
-  const targetId = await getUserIdByUniversalId(parseInt(args[1]));
-  if (!targetId) return ctx.reply('❌ Пользователь не найден');
-  
-  try {
-    await pool.query('UPDATE users SET is_banned = FALSE WHERE user_id = $1', [targetId]);
-    ctx.reply(`✅ Пользователь ${targetId} разбанен`);
-  } catch (err) {
-    console.error('Ошибка /unban:', err);
-    ctx.reply('❌ Ошибка разбана');
+// Обработчик баннера
+bot.on('photo', async (ctx) => {
+  if (ctx.message.reply_to_message?.text === '/setbanner') {
+    try {
+      const fileId = ctx.message.photo[0].file_id;
+      await pool.query('UPDATE users SET banner_file_id = $1 WHERE user_id = $2', [fileId, ctx.from.id]);
+      ctx.reply('✅ Баннер установлен!');
+    } catch (err) {
+      console.error('Ошибка установки баннера:', err);
+      ctx.reply('❌ Ошибка сохранения');
+    }
   }
 });
 
 // Команда /tagall (исправленная)
 bot.command('tagall', async (ctx) => {
   const user = await pool.query('SELECT is_premium, is_admin FROM users WHERE user_id = $1', [ctx.from.id]);
-  const isPrivileged = user.rows.length > 0 && (user.rows[0].is_premium || user.rows[0].is_admin || ctx.from.id === OWNER_ID);
-  
-  if (!isPrivileged) {
-    return ctx.reply('🚫 Эта команда доступна только для премиум пользователей и выше');
-  }
-  
+  const isPrivileged = user.rows[0]?.is_premium || user.rows[0]?.is_admin || ctx.from.id === OWNER_ID;
+  if (!isPrivileged) return ctx.reply('🚫 Требуется премиум или админ');
+
   const args = ctx.message.text.split(' ').slice(1);
   if (args.length < 2) return ctx.reply('Используйте: /tagall N сообщение');
-  
-  const count = parseInt(args[0]);
-  if (isNaN(count) || count < 1 || count > 100) return ctx.reply('❌ Укажите число от 1 до 100');
-  
+
+  const count = Math.min(100, Math.max(1, parseInt(args[0]) || 5));
   const message = args.slice(1).join(' ');
+
   const users = await pool.query(`
-    SELECT user_id, username 
-    FROM users 
-    WHERE is_banned = FALSE 
-    AND user_id != ${ctx.from.id} 
-    AND username IS NOT NULL
-    ORDER BY RANDOM() 
-    LIMIT $1`, 
+    SELECT username FROM users 
+    WHERE username IS NOT NULL 
+    AND user_id != ${ctx.from.id}
+    AND is_banned = FALSE
+    ORDER BY RANDOM() LIMIT $1`,
     [count]
   );
-  
-  if (users.rows.length === 0) return ctx.reply('❌ Нет пользователей для тега');
-  
-  let mentions = '';
-  users.rows.forEach(user => {
-    mentions += `@${user.username} ${message}\n`;
-  });
-  
+
+  if (!users.rows.length) return ctx.reply('❌ Нет пользователей для тега');
+
+  const mentions = users.rows.map(u => `@${u.username} ${message}`).join('\n');
   ctx.reply(mentions);
 });
 
-// Команда /help
-bot.command('help', (ctx) => {
-  ctx.replyWithHTML(`
-<b>📋 Список команд:</b>
-
-<b>Основные:</b>
-/start - начать работу
-/profile - ваш профиль
-/help - список команд
-
-<b>Админ:</b>
-/ban ID - забанить пользователя
-/unban ID - разбанить пользователя
-
-<b>Премиум:</b>
-/tagall N сообщение - упомянуть N случайных пользователей
-
-Разработчик: @squezzy00
-  `);
-});
-
-// Вспомогательные функции
-async function isAdmin(ctx) {
-  try {
-    const user = await pool.query('SELECT is_admin FROM users WHERE user_id = $1', [ctx.from.id]);
-    return user.rows.length > 0 && user.rows[0].is_admin;
-  } catch (err) {
-    console.error('Ошибка проверки админа:', err);
-    return false;
-  }
-}
-
-async function getUserIdByUniversalId(universalId) {
-  try {
-    const res = await pool.query('SELECT user_id FROM users WHERE universal_id = $1', [universalId]);
-    return res.rows.length > 0 ? res.rows[0].user_id : null;
-  } catch (err) {
-    console.error('Ошибка поиска пользователя:', err);
-    return null;
-  }
-}
-
-// Запуск бота
-async function start() {
-  await checkDB();
+// Запуск
+(async () => {
+  await initDB();
   
-  if (process.env.WEBHOOK_MODE === 'true') {
-    const PORT = process.env.PORT || 3000;
+  if (process.env.WEBHOOK_URL) {
     app.use(bot.webhookCallback('/webhook'));
     bot.telegram.setWebhook(process.env.WEBHOOK_URL);
-    app.listen(PORT, () => console.log(`🚀 Вебхук запущен на порту ${PORT}`));
+    app.listen(process.env.PORT || 3000, () => console.log('🚀 Вебхук запущен'));
   } else {
-    bot.launch().then(() => console.log('🤖 Бот запущен в polling режиме'));
+    bot.launch().then(() => console.log('🤖 Polling запущен'));
   }
-}
-
-start().catch(err => {
-  console.error('❌ Ошибка запуска бота:', err);
-  process.exit(1);
-});
+})();
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
