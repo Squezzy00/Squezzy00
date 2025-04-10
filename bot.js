@@ -108,12 +108,13 @@ bot.command('set', async (ctx) => {
       [ctx.from.id, buttons]
     );
     
+    // Отправляем клавиатуру ТОЛЬКО вызывающему пользователю
     await ctx.replyWithMarkdown(
       `✅ *Постоянная клавиатура сохранена!*\nИспользуйте /open\n\nРазработчик: @squezzy00`,
       Markup.keyboard(buttons)
         .resize()
         .persistent()
-        .selective() // Только для этого пользователя
+        .selective(true) // ТОЛЬКО для этого пользователя
     );
   } catch (err) {
     console.error('Ошибка /set:', err);
@@ -122,7 +123,7 @@ bot.command('set', async (ctx) => {
 });
 
 // Команда /see
-bot.command('see', (ctx) => {
+bot.command('see', async (ctx) => {
   const buttons = ctx.message.text.split(' ').slice(1).join(' ').split(',').map(b => b.trim());
   
   if (buttons.length === 0 || buttons[0] === '') {
@@ -131,57 +132,50 @@ bot.command('see', (ctx) => {
 
   activeKeyboards.set(ctx.from.id, buttons);
   
-  ctx.replyWithMarkdown(
+  // Отправляем клавиатуру ТОЛЬКО вызывающему пользователю
+  await ctx.replyWithMarkdown(
     `⌛ *Временная клавиатура активирована*\nИспользуйте /stop для удаления\n\nРазработчик: @squezzy00`,
     Markup.keyboard(buttons)
       .resize()
       .persistent()
-      .selective() // Только для этого пользователя
+      .selective(true) // ТОЛЬКО для этого пользователя
   );
 });
 
 // Команда /open
 bot.command('open', async (ctx) => {
   try {
-    // 1. Проверка временной клавиатуры
+    let buttons = [];
+    let message = '';
+    
     if (activeKeyboards.has(ctx.from.id)) {
-      const buttons = activeKeyboards.get(ctx.from.id);
-      return ctx.replyWithMarkdown(
-        `⌛ *Временная клавиатура*\n\nРазработчик: @squezzy00`,
-        Markup.keyboard(buttons)
-          .resize()
-          .persistent()
-          .selective() // Только для этого пользователя
-      );
-    }
-
-    // 2. Проверка личной клавиатуры
-    const userKb = await pool.query('SELECT buttons FROM user_keyboards WHERE user_id = $1', [ctx.from.id]);
-    if (userKb.rows.length > 0) {
-      return ctx.replyWithMarkdown(
-        `✅ *Ваша клавиатура*\n\nРазработчик: @squezzy00`,
-        Markup.keyboard(userKb.rows[0].buttons)
-          .resize()
-          .persistent()
-          .selective() // Только для этого пользователя
-      );
-    }
-
-    // 3. Проверка клавиатуры чата
-    if (ctx.chat.type !== 'private') {
-      const chatKb = await pool.query('SELECT buttons FROM chat_keyboards WHERE chat_id = $1', [ctx.chat.id]);
-      if (chatKb.rows.length > 0) {
-        return ctx.replyWithMarkdown(
-          `👥 *Клавиатура чата*\n\nРазработчик: @squezzy00`,
-          Markup.keyboard(chatKb.rows[0].buttons)
-            .resize()
-            .persistent()
-            .selective() // Только для этого пользователя
-        );
+      buttons = activeKeyboards.get(ctx.from.id);
+      message = `⌛ *Временная клавиатура*\n\nРазработчик: @squezzy00`;
+    } else {
+      const userKb = await pool.query('SELECT buttons FROM user_keyboards WHERE user_id = $1', [ctx.from.id]);
+      if (userKb.rows.length > 0) {
+        buttons = userKb.rows[0].buttons;
+        message = `✅ *Ваша клавиатура*\n\nРазработчик: @squezzy00`;
+      } else if (ctx.chat.type !== 'private') {
+        const chatKb = await pool.query('SELECT buttons FROM chat_keyboards WHERE chat_id = $1', [ctx.chat.id]);
+        if (chatKb.rows.length > 0) {
+          buttons = chatKb.rows[0].buttons;
+          message = `👥 *Клавиатура чата*\n\nРазработчик: @squezzy00`;
+        }
       }
     }
 
-    ctx.reply('ℹ️ Нет сохраненных клавиатур');
+    if (buttons.length > 0) {
+      await ctx.replyWithMarkdown(
+        message,
+        Markup.keyboard(buttons)
+          .resize()
+          .persistent()
+          .selective(true) // ТОЛЬКО для этого пользователя
+      );
+    } else {
+      await ctx.reply('ℹ️ Нет сохраненных клавиатур');
+    }
   } catch (err) {
     console.error('Ошибка /open:', err);
     ctx.reply('❌ Ошибка загрузки');
@@ -189,9 +183,10 @@ bot.command('open', async (ctx) => {
 });
 
 // Команда /stop
-bot.command('stop', (ctx) => {
+bot.command('stop', async (ctx) => {
   activeKeyboards.delete(ctx.from.id);
-  ctx.reply('🗑 Клавиатура удалена', Markup.removeKeyboard().selective());
+  // Удаляем клавиатуру ТОЛЬКО у вызывающего пользователя
+  await ctx.reply('🗑 Клавиатура удалена', Markup.removeKeyboard().selective(true));
 });
 
 // Команда /del
