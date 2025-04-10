@@ -31,12 +31,10 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS users (
         user_id BIGINT PRIMARY KEY,
         username TEXT,
-        nickname TEXT,
         universal_id SERIAL,
         is_premium BOOLEAN DEFAULT FALSE,
         is_banned BOOLEAN DEFAULT FALSE,
-        is_admin BOOLEAN DEFAULT FALSE,
-        banner_file_id TEXT
+        is_admin BOOLEAN DEFAULT FALSE
       );
     `);
     await client.query(`
@@ -94,12 +92,11 @@ bot.command('start', async (ctx) => {
   }
 });
 
-// Команда /profile
+// Команда /profile (без ника)
 bot.command('profile', async (ctx) => {
   try {
     const user = await pool.query(`
-      SELECT universal_id, username, is_premium, is_admin, banner_file_id,
-      COALESCE(nickname, username) as display_name
+      SELECT universal_id, username, is_premium, is_admin
       FROM users WHERE user_id = $1`,
       [ctx.from.id]
     );
@@ -109,58 +106,19 @@ bot.command('profile', async (ctx) => {
     const profileText = `
 <blockquote><b>Профиль пользователя</b></blockquote>
 
-<blockquote><b>│ Ник:</b> <i>${user.rows[0].display_name || 'Не установлен'}</i></blockquote>
-
 <blockquote><b>│ ID:</b> <i>${user.rows[0].universal_id}</i></blockquote>
+
+<blockquote><b>│ Username:</b> <i>@${user.rows[0].username || 'не установлен'}</i></blockquote>
 
 <blockquote><b>│ Статус:</b> <i>${user.rows[0].is_admin ? 'Админ' : 'Пользователь'}</i></blockquote>
 
 <blockquote><b>│ Премиум:</b> <i>${user.rows[0].is_premium ? 'Да' : 'Нет'}</i></blockquote>
     `;
 
-    if (user.rows[0].banner_file_id) {
-      await ctx.replyWithPhoto(user.rows[0].banner_file_id, {
-        caption: profileText,
-        parse_mode: 'HTML'
-      });
-    } else {
-      await ctx.replyWithHTML(profileText);
-    }
+    await ctx.replyWithHTML(profileText);
   } catch (err) {
     console.error('Ошибка /profile:', err);
     ctx.reply('❌ Ошибка загрузки профиля');
-  }
-});
-
-// Команда /setnick
-bot.command('setnick', async (ctx) => {
-  const nickname = ctx.message.text.split(' ').slice(1).join(' ');
-  if (!nickname) return ctx.reply('ℹ️ Используйте: /setnick ВашНикнейм');
-
-  try {
-    await pool.query('UPDATE users SET nickname = $1 WHERE user_id = $2', [nickname, ctx.from.id]);
-    ctx.reply(`✅ Никнейм установлен: ${nickname}`);
-  } catch (err) {
-    console.error('Ошибка /setnick:', err);
-    ctx.reply('❌ Ошибка изменения никнейма');
-  }
-});
-
-// Команда /setbanner
-bot.command('setbanner', (ctx) => {
-  ctx.reply('Отправьте фото в ответ на это сообщение для установки баннера');
-});
-
-bot.on('photo', async (ctx) => {
-  if (ctx.message.reply_to_message?.text === '/setbanner') {
-    try {
-      const fileId = ctx.message.photo[0].file_id;
-      await pool.query('UPDATE users SET banner_file_id = $1 WHERE user_id = $2', [fileId, ctx.from.id]);
-      ctx.reply('✅ Баннер успешно установлен!');
-    } catch (err) {
-      console.error('Ошибка установки баннера:', err);
-      ctx.reply('❌ Ошибка сохранения баннера');
-    }
   }
 });
 
@@ -341,8 +299,6 @@ bot.command('help', (ctx) => {
 <u>Основные:</u>
 /start - информация о боте
 /profile - ваш профиль
-/setnick [ник] - изменить ник
-/setbanner - установить баннер профиля
 
 <u>Клавиатуры:</u>
 /set кнопка1,кнопка2 - сохранить клавиатуру
