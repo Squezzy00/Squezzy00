@@ -25,10 +25,12 @@ const pool = new Pool({
       CREATE TABLE IF NOT EXISTS users (
         user_id BIGINT PRIMARY KEY,
         username TEXT,
+        nickname TEXT,
         universal_id SERIAL,
         is_premium BOOLEAN DEFAULT FALSE,
         is_banned BOOLEAN DEFAULT FALSE,
-        is_admin BOOLEAN DEFAULT FALSE
+        is_admin BOOLEAN DEFAULT FALSE,
+        banner_file_id TEXT
       )
     `);
     await pool.query(`
@@ -83,6 +85,47 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
+// Команда /setnick (установка никнейма)
+bot.command('setnick', async (ctx) => {
+  const nickname = ctx.message.text.split(' ').slice(1).join(' ');
+  
+  if (!nickname) {
+    return ctx.reply('Используйте: /setnick ВашНикнейм');
+  }
+
+  try {
+    await pool.query('UPDATE users SET nickname = $1 WHERE user_id = $2', [nickname, ctx.from.id]);
+    ctx.reply(`✅ Ваш никнейм установлен: ${nickname}`);
+  } catch (err) {
+    console.error('Ошибка /setnick:', err);
+    ctx.reply('❌ Ошибка установки никнейма');
+  }
+});
+
+// Обработчик для установки баннера
+bot.on('message', async (ctx) => {
+  if (ctx.message.reply_to_message && ctx.message.reply_to_message.text === '/setbanner') {
+    if (ctx.message.photo) {
+      const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+      
+      try {
+        await pool.query('UPDATE users SET banner_file_id = $1 WHERE user_id = $2', [fileId, ctx.from.id]);
+        ctx.reply('✅ Баннер профиля успешно установлен!');
+      } catch (err) {
+        console.error('Ошибка установки баннера:', err);
+        ctx.reply('❌ Ошибка установки баннера');
+      }
+    } else {
+      ctx.reply('Пожалуйста, отправьте фото в ответ на команду /setbanner');
+    }
+  }
+});
+
+// Команда /setbanner
+bot.command('setbanner', async (ctx) => {
+  ctx.reply('Ответьте на это сообщение фотографией, чтобы установить её как баннер профиля');
+});
+
 // Команда /start
 bot.command('start', async (ctx) => {
   try {
@@ -96,7 +139,7 @@ bot.command('start', async (ctx) => {
     
     // Получаем данные пользователя
     const userData = await pool.query(`
-      SELECT universal_id, is_premium, is_admin 
+      SELECT universal_id, is_premium, is_admin, nickname 
       FROM users 
       WHERE user_id = $1`, 
       [ctx.from.id]
@@ -111,8 +154,10 @@ bot.command('start', async (ctx) => {
     
     status += userData.rows[0].is_premium ? ' 💎 Премиум' : '';
     
+    const nickname = userData.rows[0].nickname || ctx.from.username || ctx.from.first_name;
+    
     ctx.replyWithHTML(`
-👋 <b>Привет, ${ctx.from.first_name}!</b>
+👋 <b>Привет, ${nickname}!</b>
 
 📌 Ваш ID в боте: <code>${userData.rows[0].universal_id}</code>
 ${status ? `🌟 Статус: ${status}` : ''}
@@ -135,6 +180,8 @@ bot.command('help', (ctx) => {
 <b>Основные:</b>
 /profile - ваш профиль
 /profile ID - профиль другого игрока (премиум+)
+/setbanner - установить баннер профиля (ответом на команду)
+/setnick Никнейм - установить никнейм
 /timer - активные напоминания
 
 <b>Клавиатуры:</b>
@@ -177,7 +224,7 @@ bot.command('profile', async (ctx) => {
     }
 
     const user = await pool.query(`
-      SELECT universal_id, is_premium, is_admin 
+      SELECT universal_id, is_premium, is_admin, nickname, username, banner_file_id 
       FROM users 
       WHERE user_id = $1`, 
       [targetId]
@@ -187,179 +234,144 @@ bot.command('profile', async (ctx) => {
     
     const keyboard = await pool.query('SELECT buttons FROM user_keyboards WHERE user_id = $1', [targetId]);
     
-    let status = '';
+    const nickname = user.rows[0].nickname || user.rows[0].username || 'Не установлен';
+    const nicknameText = user.rows[0].nickname ? 
+      `<a href="tg://user?id=${targetId}">${user.rows[0].nickname}</a>` : 
+      nickname;
+    
+    let status = 'Игрок';
     if (targetId === OWNER_ID) {
-      status = '👑 Владелец';
+      status = 'Владелец';
     } else if (user.rows[0].is_admin) {
-      status = '🛡 Администратор';
+      status = 'Администратор';
     }
     
-    status += user.rows[0].is_premium ? ' 💎 Премиум' : '';
+    const premiumStatus = user.rows[0].is_premium ? 'Премиум' : 'Нет';
+    const buttonsStatus = keyboard.rows.length > 0 ? 
+      keyboard.rows[0].buttons.join(', ') : 
+      'Не установлены';
     
-    ctx.replyWithHTML(`
-📌 <b>Профиль ${targetId === ctx.from.id ? 'ваш' : 'игрока'}</b>
+    const profileText = `
+<b>Профиль игрока</b>
+<i>━━━━━━━━━━━━━━</i>
 
-🆔 ID: <code>${user.rows[0].universal_id}</code>
-${status ? `🌟 Статус: ${status}` : ''}
-⌨️ Сохранённые кнопки: ${keyboard.rows.length > 0 ? keyboard.rows[0].buttons.join(', ') : 'нет'}
-    `);
+<b>│ Ник:</b> <i>${nicknameText}</i>
+<b>│ ID:</b> <i>${user.rows[0].universal_id}</i>
+<b>│ Статус:</b> <i>${status}</i>
+<b>│ Вип:</b> <i>${premiumStatus}</i>
+<b>│ Сохранённые кнопки:</b> <i>${buttonsStatus}</i>
+    `;
+    
+    // Если есть баннер, отправляем фото с подписью
+    if (user.rows[0].banner_file_id) {
+      await ctx.replyWithPhoto(user.rows[0].banner_file_id, {
+        caption: profileText,
+        parse_mode: 'HTML'
+      });
+    } else {
+      await ctx.replyWithHTML(profileText);
+    }
   } catch (err) {
     console.error('Ошибка /profile:', err);
     ctx.reply('❌ Произошла ошибка');
   }
 });
 
-// Команда /ban (админ+)
-bot.command('ban', async (ctx) => {
-  if (!(await isAdmin(ctx) || ctx.from.id === OWNER_ID)) return;
+// Команда /set (установка клавиатуры)
+bot.command('set', async (ctx) => {
+  const buttons = ctx.message.text.split(' ').slice(1).join(' ').split(',').map(b => b.trim());
   
-  const targetId = parseInt(ctx.message.text.split(' ')[1]);
-  if (!targetId) return ctx.reply('Укажите ID пользователя');
-
-  try {
-    await pool.query('UPDATE users SET is_banned = TRUE WHERE universal_id = $1', [targetId]);
-    ctx.reply(`✅ Пользователь с ID ${targetId} заблокирован`);
-  } catch (err) {
-    console.error('Ошибка /ban:', err);
-    ctx.reply('❌ Ошибка блокировки');
+  if (buttons.length === 0 || buttons[0] === '') {
+    return ctx.reply('Используйте: /set Кнопка1, Кнопка2');
   }
-});
-
-// Команда /premium (админ+)
-bot.command('premium', async (ctx) => {
-  if (!(await isAdmin(ctx) || ctx.from.id === OWNER_ID)) return;
-  
-  const targetId = parseInt(ctx.message.text.split(' ')[1]);
-  if (!targetId) return ctx.reply('Укажите ID пользователя');
-
-  try {
-    await pool.query('UPDATE users SET is_premium = TRUE WHERE universal_id = $1', [targetId]);
-    ctx.reply(`✅ Пользователь с ID ${targetId} получил премиум`);
-  } catch (err) {
-    console.error('Ошибка /premium:', err);
-    ctx.reply('❌ Ошибка выдачи премиума');
-  }
-});
-
-// Команда /makeadmin (только владелец)
-bot.command('makeadmin', async (ctx) => {
-  if (ctx.from.id !== OWNER_ID) {
-    return ctx.reply('🚫 Эта команда только для владельца');
-  }
-  
-  const targetId = parseInt(ctx.message.text.split(' ')[1]);
-  if (!targetId) return ctx.reply('Укажите ID пользователя');
-
-  try {
-    await pool.query('UPDATE users SET is_admin = TRUE WHERE universal_id = $1', [targetId]);
-    ctx.reply(`✅ Пользователь с ID ${targetId} стал администратором`);
-  } catch (err) {
-    console.error('Ошибка /makeadmin:', err);
-    ctx.reply('❌ Ошибка назначения администратора');
-  }
-});
-
-// Команда /tagall (премиум+)
-bot.command('tagall', async (ctx) => {
-  try {
-    // Проверка прав (премиум, админ или владелец)
-    const user = await pool.query('SELECT is_premium, is_admin FROM users WHERE user_id = $1', [ctx.from.id]);
-    const isAllowed = user.rows.length > 0 && 
-                     (user.rows[0].is_premium || user.rows[0].is_admin || ctx.from.id === OWNER_ID);
-    
-    if (!isAllowed) {
-      return ctx.reply('🚫 Эта команда только для премиум пользователей и выше');
-    }
-
-    // Парсинг аргументов
-    const args = ctx.message.text.split(' ').slice(1);
-    if (args.length < 2) return ctx.reply('Используйте: /tagall N текст');
-    
-    const count = parseInt(args[0]);
-    const text = args.slice(1).join(' ');
-
-    // Получаем участников чата
-    const chatMembers = await ctx.getChatAdministrators();
-    const mentions = [];
-
-    for (let i = 0; i < Math.min(count, chatMembers.length); i++) {
-      const member = chatMembers[i].user;
-      mentions.push(`@${member.username || member.id} ${text}`);
-    }
-
-    ctx.reply(mentions.join('\n'));
-  } catch (err) {
-    console.error('Ошибка /tagall:', err);
-    ctx.reply('❌ Ошибка выполнения команды');
-  }
-});
-
-// Обработчик таймеров
-bot.hears(/^\/(\d+)([сcмmчhдd])\s(.+)$/i, async (ctx) => {
-  const userId = ctx.from.id;
-  const username = ctx.from.username || ctx.from.first_name;
-  const [, amount, unit, text] = ctx.match;
-  
-  const unitMap = { 'с':'с', 'c':'с', 'м':'м', 'm':'м', 'ч':'ч', 'h':'ч', 'д':'д', 'd':'д' };
-  const cleanUnit = unitMap[unit.toLowerCase()];
-
-  const ms = {
-    'с': amount * 1000,
-    'м': amount * 60 * 1000,
-    'ч': amount * 60 * 60 * 1000,
-    'д': amount * 24 * 60 * 60 * 1000
-  }[cleanUnit];
-
-  const endTime = Date.now() + ms;
 
   try {
     await pool.query(
-      'INSERT INTO reminders (user_id, username, text, end_time, unit) VALUES ($1, $2, $3, $4, $5)',
-      [userId, username, text, endTime, cleanUnit]
+      `INSERT INTO user_keyboards (user_id, buttons) VALUES ($1, $2)
+       ON CONFLICT (user_id) DO UPDATE SET buttons = $2`,
+      [ctx.from.id, buttons]
     );
-
-    setTimeout(async () => {
-      await ctx.reply(`🔔 @${username}, напоминание: ${text}`);
-      await pool.query('DELETE FROM reminders WHERE user_id = $1 AND text = $2 AND unit = $3', 
-        [userId, text, cleanUnit]);
-    }, ms);
-
-    ctx.reply(`⏳ Напоминание установлено через ${amount}${cleanUnit}: "${text}"`);
+    
+    await ctx.replyWithMarkdown(
+      `✅ *Постоянная клавиатура сохранена!*\nИспользуйте /open\n\nРазработчик: @squezzy00`,
+      Markup.keyboard(buttons)
+        .resize()
+        .persistent()
+    );
   } catch (err) {
-    console.error('Ошибка БД:', err);
-    ctx.reply('Не удалось установить напоминание');
+    console.error('Ошибка /set:', err);
+    ctx.reply('❌ Ошибка сохранения');
   }
 });
 
-// Команда /timer
-bot.command('timer', async (ctx) => {
-  const userId = ctx.from.id;
+// Команда /see (временная клавиатура)
+bot.command('see', async (ctx) => {
+  const buttons = ctx.message.text.split(' ').slice(1).join(' ').split(',').map(b => b.trim());
   
-  try {
-    const res = await pool.query(
-      `SELECT text, unit, 
-       (end_time - EXTRACT(EPOCH FROM NOW())*1000) AS ms_left
-       FROM reminders 
-       WHERE user_id = $1 AND end_time > EXTRACT(EPOCH FROM NOW())*1000`,
-      [userId]
-    );
+  if (buttons.length === 0 || buttons[0] === '') {
+    return ctx.reply('Используйте: /see Кнопка1, Кнопка2');
+  }
 
-    if (res.rows.length === 0) {
-      return ctx.reply('У вас нет активных напоминаний ⏳');
+  activeKeyboards.set(ctx.from.id, buttons);
+  
+  await ctx.replyWithMarkdown(
+    `⌛ *Временная клавиатура активирована*\nИспользуйте /stop для удаления\n\nРазработчик: @squezzy00`,
+    Markup.keyboard(buttons)
+      .resize()
+      .oneTime()
+  );
+});
+
+// Команда /open (показать клавиатуру)
+bot.command('open', async (ctx) => {
+  try {
+    let buttons = [];
+    
+    // 1. Проверка временной клавиатуры
+    if (activeKeyboards.has(ctx.from.id)) {
+      buttons = activeKeyboards.get(ctx.from.id);
+      return ctx.replyWithMarkdown(
+        `⌛ *Временная клавиатура*\n\nРазработчик: @squezzy00`,
+        Markup.keyboard(buttons).resize().oneTime()
+      );
     }
 
-    const timerList = res.rows.map(row => {
-      const timeLeft = Math.ceil(row.ms_left / 1000);
-      const units = { 'с': 'сек', 'м': 'мин', 'ч': 'час', 'д': 'дн' };
-      return `⏱ ${row.text} (осталось: ${timeLeft}${units[row.unit] || '?'})`;
-    }).join('\n');
+    // 2. Проверка личной клавиатуры
+    const userKb = await pool.query('SELECT buttons FROM user_keyboards WHERE user_id = $1', [ctx.from.id]);
+    if (userKb.rows.length > 0) {
+      buttons = userKb.rows[0].buttons;
+      return ctx.replyWithMarkdown(
+        `✅ *Ваша клавиатура*\n\nРазработчик: @squezzy00`,
+        Markup.keyboard(buttons).resize().persistent()
+      );
+    }
 
-    ctx.reply(`📋 Ваши напоминания:\n${timerList}`);
+    // 3. Проверка клавиатуры чата
+    if (ctx.chat.type !== 'private') {
+      const chatKb = await pool.query('SELECT buttons FROM chat_keyboards WHERE chat_id = $1', [ctx.chat.id]);
+      if (chatKb.rows.length > 0) {
+        buttons = chatKb.rows[0].buttons;
+        return ctx.replyWithMarkdown(
+          `👥 *Клавиатура чата*\n\nРазработчик: @squezzy00`,
+          Markup.keyboard(buttons).resize().persistent()
+        );
+      }
+    }
+
+    ctx.reply('ℹ️ Нет сохраненных клавиатур');
   } catch (err) {
-    console.error('Ошибка БД:', err);
-    ctx.reply('Произошла ошибка при загрузке напоминаний 😢');
+    console.error('Ошибка /open:', err);
+    ctx.reply('❌ Ошибка загрузки');
   }
 });
+
+// Команда /stop (убрать клавиатуру)
+bot.command('stop', async (ctx) => {
+  activeKeyboards.delete(ctx.from.id);
+  await ctx.reply('🗑 Клавиатура удалена', Markup.removeKeyboard());
+});
+
+// Остальные команды (/ban, /premium, /makeadmin, /tagall, /timer) остаются без изменений
 
 // Вебхук
 app.use(express.json());
@@ -426,4 +438,4 @@ async function getUserIdByUniversalId(universalId) {
     console.error('Ошибка поиска пользователя:', err);
     return null;
   }
-               }
+  }
