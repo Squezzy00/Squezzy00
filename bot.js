@@ -252,14 +252,17 @@ bot.command('profile', async (ctx) => {
       'Не установлены';
     
     const profileText = `
-<b>Профиль игрока</b>
-<i>━━━━━━━━━━━━━━</i>
+<blockquote><b>Профиль игрока</b></blockquote>
 
-<b>│ Ник:</b> <i>${nicknameText}</i>
-<b>│ ID:</b> <i>${user.rows[0].universal_id}</i>
-<b>│ Статус:</b> <i>${status}</i>
-<b>│ Вип:</b> <i>${premiumStatus}</i>
-<b>│ Сохранённые кнопки:</b> <i>${buttonsStatus}</i>
+<blockquote><b>│ Ник:</b> <i>${nicknameText}</i></blockquote>
+
+<blockquote><b>│ ID:</b> <i>${user.rows[0].universal_id}</i></blockquote>
+
+<blockquote><b>│ Статус:</b> <i>${status}</i></blockquote>
+
+<blockquote><b>│ Вип:</b> <i>${premiumStatus}</i></blockquote>
+
+<blockquote><b>│ Сохранённые кнопки:</b> <i>${buttonsStatus}</i></blockquote>
     `;
     
     // Если есть баннер, отправляем фото с подписью
@@ -371,7 +374,119 @@ bot.command('stop', async (ctx) => {
   await ctx.reply('🗑 Клавиатура удалена', Markup.removeKeyboard());
 });
 
-// Остальные команды (/ban, /premium, /makeadmin, /tagall, /timer) остаются без изменений
+// Команда /ban
+bot.command('ban', async (ctx) => {
+  if (!await isAdmin(ctx)) return;
+  
+  const args = ctx.message.text.split(' ');
+  if (args.length < 2) return ctx.reply('Используйте: /ban ID_пользователя');
+  
+  const targetId = await getUserIdByUniversalId(parseInt(args[1]));
+  if (!targetId) return ctx.reply('❌ Пользователь не найден');
+  
+  try {
+    await pool.query('UPDATE users SET is_banned = TRUE WHERE user_id = $1', [targetId]);
+    ctx.reply(`✅ Пользователь ${targetId} забанен`);
+  } catch (err) {
+    console.error('Ошибка /ban:', err);
+    ctx.reply('❌ Ошибка бана');
+  }
+});
+
+// Команда /premium
+bot.command('premium', async (ctx) => {
+  if (!await isAdmin(ctx)) return;
+  
+  const args = ctx.message.text.split(' ');
+  if (args.length < 2) return ctx.reply('Используйте: /premium ID_пользователя');
+  
+  const targetId = await getUserIdByUniversalId(parseInt(args[1]));
+  if (!targetId) return ctx.reply('❌ Пользователь не найден');
+  
+  try {
+    await pool.query('UPDATE users SET is_premium = TRUE WHERE user_id = $1', [targetId]);
+    ctx.reply(`✅ Пользователь ${targetId} получил премиум`);
+  } catch (err) {
+    console.error('Ошибка /premium:', err);
+    ctx.reply('❌ Ошибка выдачи премиума');
+  }
+});
+
+// Команда /makeadmin
+bot.command('makeadmin', async (ctx) => {
+  if (ctx.from.id !== OWNER_ID) return;
+  
+  const args = ctx.message.text.split(' ');
+  if (args.length < 2) return ctx.reply('Используйте: /makeadmin ID_пользователя');
+  
+  const targetId = await getUserIdByUniversalId(parseInt(args[1]));
+  if (!targetId) return ctx.reply('❌ Пользователь не найден');
+  
+  try {
+    await pool.query('UPDATE users SET is_admin = TRUE WHERE user_id = $1', [targetId]);
+    ctx.reply(`✅ Пользователь ${targetId} назначен администратором`);
+  } catch (err) {
+    console.error('Ошибка /makeadmin:', err);
+    ctx.reply('❌ Ошибка назначения администратора');
+  }
+});
+
+// Команда /tagall
+bot.command('tagall', async (ctx) => {
+  const user = await pool.query('SELECT is_premium, is_admin FROM users WHERE user_id = $1', [ctx.from.id]);
+  const isPrivileged = user.rows.length > 0 && (user.rows[0].is_premium || user.rows[0].is_admin || ctx.from.id === OWNER_ID);
+  
+  if (!isPrivileged) {
+    return ctx.reply('🚫 Эта команда доступна только для премиум пользователей и выше');
+  }
+  
+  const args = ctx.message.text.split(' ').slice(1);
+  if (args.length < 2) return ctx.reply('Используйте: /tagall N сообщение');
+  
+  const count = parseInt(args[0]);
+  if (isNaN(count) || count < 1 || count > 100) return ctx.reply('❌ Укажите число от 1 до 100');
+  
+  const message = args.slice(1).join(' ');
+  const users = await pool.query('SELECT user_id FROM users WHERE is_banned = FALSE ORDER BY RANDOM() LIMIT $1', [count]);
+  
+  if (users.rows.length === 0) return ctx.reply('❌ Нет пользователей для тега');
+  
+  const mentions = users.rows.map(u => `<a href="tg://user?id=${u.user_id}">.</a>`).join('');
+  ctx.replyWithHTML(`${message}\n\n${mentions}`);
+});
+
+// Команда /timer
+bot.command('timer', async (ctx) => {
+  try {
+    const reminders = await pool.query(
+      'SELECT id, text, end_time, unit FROM reminders WHERE user_id = $1 ORDER BY end_time',
+      [ctx.from.id]
+    );
+    
+    if (reminders.rows.length === 0) {
+      return ctx.reply('ℹ️ У вас нет активных напоминаний');
+    }
+    
+    const now = Math.floor(Date.now() / 1000);
+    let text = '⏰ Ваши активные напоминания:\n\n';
+    
+    reminders.rows.forEach(reminder => {
+      const timeLeft = reminder.end_time - now;
+      const hours = Math.floor(timeLeft / 3600);
+      const minutes = Math.floor((timeLeft % 3600) / 60);
+      const seconds = timeLeft % 60;
+      
+      text += `🔹 ID: ${reminder.id}\n`;
+      text += `📝 Текст: ${reminder.text}\n`;
+      text += `⏳ Осталось: ${hours}ч ${minutes}м ${seconds}с\n\n`;
+    });
+    
+    ctx.reply(text);
+  } catch (err) {
+    console.error('Ошибка /timer:', err);
+    ctx.reply('❌ Ошибка получения напоминаний');
+  }
+});
 
 // Вебхук
 app.use(express.json());
@@ -438,4 +553,4 @@ async function getUserIdByUniversalId(universalId) {
     console.error('Ошибка поиска пользователя:', err);
     return null;
   }
-  }
+                                            }
