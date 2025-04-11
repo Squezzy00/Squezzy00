@@ -84,7 +84,7 @@ bot.command('start', async (ctx) => {
 • Напоминания (/timer)
 • Управление профилем (/profile)
 
-Используйте /help для сп��ска команд
+Используйте /help для списка команд
     `);
   } catch (err) {
     console.error('Ошибка /start:', err);
@@ -92,7 +92,7 @@ bot.command('start', async (ctx) => {
   }
 });
 
-// Команда /profile (без ника)
+// Команда /profile
 bot.command('profile', async (ctx) => {
   try {
     const user = await pool.query(`
@@ -178,8 +178,8 @@ bot.command('tagall', async (ctx) => {
   const args = ctx.message.text.split(' ');
   if (args.length < 2) return ctx.reply('ℹ️ Используйте: /tagall N сообщение');
 
-  const perMessage = Math.min(50, Math.max(1, parseInt(args[0]) || 5));
-  const message = args.slice(1).join(' ');
+  const perMessage = Math.min(50, Math.max(1, parseInt(args[1]) || 5));
+  const message = args.slice(2).join(' ');
 
   try {
     const members = await ctx.getChatAdministrators();
@@ -252,40 +252,30 @@ bot.command('stop', (ctx) => {
   ctx.reply('🗑 Клавиатура удалена', Markup.removeKeyboard());
 });
 
-// Команда /timer
+// Команда /timer (исправленная версия)
 bot.command('timer', async (ctx) => {
-  const args = ctx.message.text.split(' ');
-  if (args.length < 2) return ctx.reply('ℹ️ Используйте: /timer 5с/5м/5ч/5д текст');
+  const args = ctx.message.text.split(' ').slice(1);
+  if (args.length < 2) return ctx.reply('ℹ️ Используйте: /timer <время><s/m/h/d> <текст>\nПример: /timer 30m позвонить маме');
 
-  // Разбираем временной интервал
-  const timeStr = args[1];
-  const timeMatch = timeStr.match(/^(\d+)([сmчд])$/i);
-  if (!timeMatch) return ctx.reply('❌ Неверный формат времени. Используйте: 5с, 10м, 2ч, 1д');
+  // Разбираем время и единицы измерения
+  const timeStr = args[0];
+  const timeMatch = timeStr.match(/^(\d+)([smhd])$/i);
+  if (!timeMatch) return ctx.reply('❌ Неверный формат времени. Используйте:\n30s - 30 секунд\n15m - 15 минут\n2h - 2 часа\n1d - 1 день');
 
   const value = parseInt(timeMatch[1]);
   const unit = timeMatch[2].toLowerCase();
   
+  // Вычисляем время в миллисекундах
   let milliseconds;
   switch (unit) {
-    case 'с': // секунды
-      milliseconds = value * 1000;
-      break;
-    case 'м': // минуты
-      milliseconds = value * 60 * 1000;
-      break;
-    case 'ч': // часы
-      milliseconds = value * 60 * 60 * 1000;
-      break;
-    case 'д': // дни
-      milliseconds = value * 24 * 60 * 60 * 1000;
-      break;
-    default:
-      return ctx.reply('❌ Неизвестная единица времени. Используйте: с, м, ч, д');
+    case 's': milliseconds = value * 1000; break;
+    case 'm': milliseconds = value * 60 * 1000; break;
+    case 'h': milliseconds = value * 60 * 60 * 1000; break;
+    case 'd': milliseconds = value * 24 * 60 * 60 * 1000; break;
+    default: return ctx.reply('❌ Неизвестная единица времени');
   }
 
-  const text = args.slice(2).join(' ');
-  if (!text) return ctx.reply('❌ Укажите текст напоминания');
-  
+  const text = args.slice(1).join(' ');
   const endTime = Date.now() + milliseconds;
 
   try {
@@ -294,16 +284,16 @@ bot.command('timer', async (ctx) => {
       VALUES ($1, $2, $3)`,
       [ctx.from.id, text, Math.floor(endTime / 1000)]
     );
-    
+
     // Форматируем время для ответа
     let unitName;
     switch (unit) {
-      case 'с': unitName = 'секунд'; break;
-      case 'м': unitName = 'минут'; break;
-      case 'ч': unitName = 'часов'; break;
-      case 'д': unitName = 'дней'; break;
+      case 's': unitName = 'секунд'; break;
+      case 'm': unitName = 'минут'; break;
+      case 'h': unitName = 'часов'; break;
+      case 'd': unitName = 'дней'; break;
     }
-    
+
     ctx.reply(`⏰ Напоминание установлено на ${value} ${unitName} (${new Date(endTime).toLocaleString()})`);
   } catch (err) {
     console.error('Ошибка /timer:', err);
@@ -342,8 +332,12 @@ bot.command('help', (ctx) => {
 /stop - убрать клавиатуру
 
 <u>Напоминания:</u>
-/timer 5с/5м/5ч/5д текст - установить напоминание
-(пример: /timer 30м позвонить маме)
+/timer <время><s/m/h/d> <текст>
+Примеры:
+/timer 30s напоить кота
+/timer 15m проверить еду
+/timer 1h позвонить маме
+/timer 1d оплатить счета
 
 <u>Для админов:</u>
 /ban ID - забанить пользователя
