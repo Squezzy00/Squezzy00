@@ -48,7 +48,8 @@ async function initDB() {
         id SERIAL PRIMARY KEY,
         user_id BIGINT NOT NULL,
         text TEXT NOT NULL,
-        end_time BIGINT NOT NULL
+        end_time BIGINT NOT NULL,
+        unit TEXT
       );
     `);
     console.log('✅ Таблицы БД инициализированы');
@@ -290,6 +291,47 @@ bot.command('timer', async (ctx) => {
     switch (unit) {
       case 's': unitName = 'секунд'; break;
       case 'm': unitName = 'минут'; break;
+bot.command('timer', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1);
+  if (args.length < 2) {
+    return ctx.reply('ℹ️ Используйте: /timer <время><s/m/h/d> <текст>\nПример: /timer 30m позвонить маме');
+  }
+
+  // Разбираем время и единицы измерения
+  const timeStr = args[0];
+  const timeMatch = timeStr.match(/^(\d+)([smhd])$/i);
+  if (!timeMatch) {
+    return ctx.reply('❌ Неверный формат времени. Используйте:\n30s - 30 секунд\n15m - 15 минут\n2h - 2 часа\n1d - 1 день');
+  }
+
+  const value = parseInt(timeMatch[1]);
+  const unit = timeMatch[2].toLowerCase();
+  
+  // Вычисляем время в миллисекундах
+  let milliseconds;
+  switch (unit) {
+    case 's': milliseconds = value * 1000; break;
+    case 'm': milliseconds = value * 60 * 1000; break;
+    case 'h': milliseconds = value * 60 * 60 * 1000; break;
+    case 'd': milliseconds = value * 24 * 60 * 60 * 1000; break;
+    default: return ctx.reply('❌ Неизвестная единица времени');
+  }
+
+  const text = args.slice(1).join(' ');
+  const endTime = Date.now() + milliseconds;
+
+  try {
+    await pool.query(`
+      INSERT INTO reminders (user_id, text, end_time, unit)
+      VALUES ($1, $2, $3, $4)`,
+      [ctx.from.id, text, Math.floor(endTime / 1000), unit]
+    );
+
+    // Форматируем время для ответа
+    let unitName;
+    switch (unit) {
+      case 's': unitName = 'секунд'; break;
+      case 'm': unitName = 'минут'; break;
       case 'h': unitName = 'часов'; break;
       case 'd': unitName = 'дней'; break;
     }
@@ -300,22 +342,7 @@ bot.command('timer', async (ctx) => {
     ctx.reply('❌ Ошибка установки напоминания');
   }
 });
-
-// Проверка напоминаний
-setInterval(async () => {
-  try {
-    const now = Math.floor(Date.now() / 1000);
-    const reminders = await pool.query('SELECT * FROM reminders WHERE end_time <= $1', [now]);
-    
-    for (const rem of reminders.rows) {
-      await bot.telegram.sendMessage(rem.user_id, `🔔 Напоминание: ${rem.text}`);
-      await pool.query('DELETE FROM reminders WHERE id = $1', [rem.id]);
-    }
-  } catch (err) {
-    console.error('Ошибка проверки напоминаний:', err);
-  }
-}, 60000);
-
+        
 // Команда /help
 bot.command('help', (ctx) => {
   ctx.replyWithHTML(`
