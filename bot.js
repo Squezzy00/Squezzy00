@@ -84,7 +84,7 @@ bot.command('start', async (ctx) => {
 • Напоминания (/timer)
 • Управление профилем (/profile)
 
-Используйте /help для списка команд
+Используйте /help для сп��ска команд
     `);
   } catch (err) {
     console.error('Ошибка /start:', err);
@@ -255,13 +255,38 @@ bot.command('stop', (ctx) => {
 // Команда /timer
 bot.command('timer', async (ctx) => {
   const args = ctx.message.text.split(' ');
-  if (args.length < 2) return ctx.reply('ℹ️ Используйте: /timer минуты текст');
+  if (args.length < 2) return ctx.reply('ℹ️ Используйте: /timer 5с/5м/5ч/5д текст');
 
-  const minutes = parseInt(args[0]);
-  if (isNaN(minutes)) return ctx.reply('❌ Укажите число минут');
+  // Разбираем временной интервал
+  const timeStr = args[1];
+  const timeMatch = timeStr.match(/^(\d+)([сmчд])$/i);
+  if (!timeMatch) return ctx.reply('❌ Неверный формат времени. Используйте: 5с, 10м, 2ч, 1д');
 
-  const text = args.slice(1).join(' ');
-  const endTime = Date.now() + minutes * 60000;
+  const value = parseInt(timeMatch[1]);
+  const unit = timeMatch[2].toLowerCase();
+  
+  let milliseconds;
+  switch (unit) {
+    case 'с': // секунды
+      milliseconds = value * 1000;
+      break;
+    case 'м': // минуты
+      milliseconds = value * 60 * 1000;
+      break;
+    case 'ч': // часы
+      milliseconds = value * 60 * 60 * 1000;
+      break;
+    case 'д': // дни
+      milliseconds = value * 24 * 60 * 60 * 1000;
+      break;
+    default:
+      return ctx.reply('❌ Неизвестная единица времени. Используйте: с, м, ч, д');
+  }
+
+  const text = args.slice(2).join(' ');
+  if (!text) return ctx.reply('❌ Укажите текст напоминания');
+  
+  const endTime = Date.now() + milliseconds;
 
   try {
     await pool.query(`
@@ -269,7 +294,17 @@ bot.command('timer', async (ctx) => {
       VALUES ($1, $2, $3)`,
       [ctx.from.id, text, Math.floor(endTime / 1000)]
     );
-    ctx.reply(`⏰ Напоминание установлено на ${new Date(endTime).toLocaleTimeString()}`);
+    
+    // Форматируем время для ответа
+    let unitName;
+    switch (unit) {
+      case 'с': unitName = 'секунд'; break;
+      case 'м': unitName = 'минут'; break;
+      case 'ч': unitName = 'часов'; break;
+      case 'д': unitName = 'дней'; break;
+    }
+    
+    ctx.reply(`⏰ Напоминание установлено на ${value} ${unitName} (${new Date(endTime).toLocaleString()})`);
   } catch (err) {
     console.error('Ошибка /timer:', err);
     ctx.reply('❌ Ошибка установки напоминания');
@@ -307,7 +342,8 @@ bot.command('help', (ctx) => {
 /stop - убрать клавиатуру
 
 <u>Напоминания:</u>
-/timer минуты текст - установить напоминание
+/timer 5с/5м/5ч/5д текст - установить напоминание
+(пример: /timer 30м позвонить маме)
 
 <u>Для админов:</u>
 /ban ID - забанить пользователя
