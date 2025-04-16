@@ -10,8 +10,9 @@
   "dependencies": {
     "telegraf": "^4.12.2",
     "dotenv": "^16.3.1",
-    "lowdb": "^7.0.0",
-    "lodash": "^4.17.21"
+    "lowdb": "^3.0.0",
+    "lodash": "^4.17.21",
+    "fs": "0.0.1-security"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
