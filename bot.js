@@ -1,31 +1,28 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const low = require('lowdb');
-const FileSync = require('lowdb/adapters/FileSync');
+const { Low, JSONFile } = require('lowdb');
+const fs = require('fs');
 const _ = require('lodash');
 
 // Инициализация БД
-const adapter = new FileSync('db.json');
-const db = low(adapter);
+const adapter = new JSONFile('db.json');
+const db = new Low(adapter);
 
 // Инициализация структуры БД
-db.defaults({
-  users: {},
-  stats: {
-    totalTimers: 0,
-    activeTimers: 0
-  }
-}).write();
+async function initDB() {
+  await db.read();
+  db.data ||= { 
+    users: {},
+    stats: {
+      totalTimers: 0,
+      activeTimers: 0
+    }
+  };
+  await db.write();
+}
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const OWNER_ID = parseInt(process.env.OWNER_ID);
-
-// Функция для получения следующего ID таймера для пользователя
-function getNextTimerId(userId) {
-  const userTimers = db.get(`users.${userId}.timers`).value() || {};
-  const ids = Object.keys(userTimers).map(Number);
-  return ids.length > 0 ? Math.max(...ids) + 1 : 1;
-}
 
 // Функция для экранирования MarkdownV2
 function escapeMarkdown(text) {
@@ -74,6 +71,8 @@ function getTimeString(amount, unit) {
 
 // Обработчик команд напоминаний
 bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
+  await initDB();
+  
   const userId = ctx.message.from.id;
   const chatId = ctx.message.chat.id;
   const username = ctx.message.from.username ? `@${ctx.message.from.username}` : escapeMarkdown(ctx.message.from.first_name);
@@ -90,22 +89,24 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
   }
 
   if (milliseconds > 0) {
-    const timerId = getNextTimerId(userId);
+    const timerId = _.get(db.data, `users.${userId}.lastTimerId`, 0) + 1;
     const timeString = getTimeString(amount, unit);
     const expiresAt = Date.now() + milliseconds;
 
     // Сохраняем таймер в БД
-    db.set(`users.${userId}.timers.${timerId}`, {
+    _.set(db.data, `users.${userId}.timers.${timerId}`, {
       text,
       expiresAt,
       chatId,
       unit,
       amount
-    }).write();
+    });
+    _.set(db.data, `users.${userId}.lastTimerId`, timerId);
 
     // Обновляем статистику
-    db.update('stats.activeTimers', n => n + 1).write();
-    db.update('stats.totalTimers', n => n + 1).write();
+    db.data.stats.activeTimers++;
+    db.data.stats.totalTimers++;
+    await db.write();
 
     await ctx.replyWithMarkdownV2(
       `⏳ *${escapeMarkdown(username)}, Таймер №${timerId} установлен\\!*\n` +
@@ -116,7 +117,6 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
 
     const timer = setTimeout(async () => {
       try {
-        // Отправляем напоминание
         await ctx.telegram.sendMessage(
           chatId,
           `🔔 *${escapeMarkdown(username)}, Таймер №${timerId}\\!*\n` +
@@ -125,16 +125,17 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
           { parse_mode: 'MarkdownV2' }
         );
 
-        // Удаляем таймер из БД
-        db.unset(`users.${userId}.timers.${timerId}`).write();
-        db.update('stats.activeTimers', n => n - 1).write();
+        _.unset(db.data, `users.${userId}.timers.${timerId}`);
+        db.data.stats.activeTimers--;
+        await db.write();
       } catch (error) {
         console.error('Ошибка при отправке напоминания:', error);
       }
     }, milliseconds);
 
-    // Сохраняем timeout для возможности отмены
-    db.set(`users.${userId}.timers.${timerId}.timeout`, timer).write();
+    // Сохраняем timeout
+    _.set(db.data, `users.${userId}.timers.${timerId}.timeout`, timer);
+    await db.write();
   } else {
     await ctx.reply('❌ Неверный формат времени. Используйте /1с, /5м, /2ч или /3д');
   }
@@ -142,11 +143,13 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
 
 // Команда для просмотра активных таймеров
 bot.command('таймеры', async (ctx) => {
+  await initDB();
+  
   const userId = ctx.message.from.id;
   const username = ctx.message.from.username ? `@${ctx.message.from.username}` : escapeMarkdown(ctx.message.from.first_name);
-  const timers = db.get(`users.${userId}.timers`).value();
+  const timers = _.get(db.data, `users.${userId}.timers`, {});
 
-  if (!timers || Object.keys(timers).length === 0) {
+  if (Object.keys(timers).length === 0) {
     return ctx.replyWithMarkdownV2(
       `📭 *${escapeMarkdown(username)}, у вас нет активных таймеров\\!*`
     );
@@ -156,10 +159,8 @@ bot.command('таймеры', async (ctx) => {
   const now = Date.now();
 
   for (const [timerId, timer] of Object.entries(timers)) {
-    if (timer.expiresAt) {
+    if (timer.expiresAt && timer.expiresAt > now) {
       const timeLeft = timer.expiresAt - now;
-      if (timeLeft <= 0) continue;
-      
       const timeString = getTimeString(timer.amount, timer.unit);
       message += `🔹 *Таймер №${timerId}*\n` +
                  `📝 *Текст:* ${escapeMarkdown(timer.text)}\n` +
@@ -167,15 +168,13 @@ bot.command('таймеры', async (ctx) => {
     }
   }
 
-  if (message.endsWith('\n\n')) {
-    message = message.slice(0, -2);
-  }
-
   await ctx.replyWithMarkdownV2(message);
 });
 
 // Команда для удаления таймера
 bot.command('clear', async (ctx) => {
+  await initDB();
+  
   const userId = ctx.message.from.id;
   const username = ctx.message.from.username ? `@${ctx.message.from.username}` : escapeMarkdown(ctx.message.from.first_name);
   const args = ctx.message.text.split(' ');
@@ -188,60 +187,59 @@ bot.command('clear', async (ctx) => {
   }
 
   const timerId = parseInt(args[1]);
-  const userTimers = db.get(`users.${userId}.timers`).value() || {};
+  const timer = _.get(db.data, `users.${userId}.timers.${timerId}`);
 
-  if (!userTimers[timerId]) {
+  if (!timer) {
     return ctx.replyWithMarkdownV2(
       `❌ *${escapeMarkdown(username)}, таймер №${timerId} не найден\\!*\n` +
-      `📋 Используйте \`/таймеры\` для просмотра активных таймеров`
+      `📋 Используйте \`/таймеры\` д��я просмотра активных таймеров`
     );
   }
 
   // Отменяем таймаут
-  if (userTimers[timerId].timeout) {
-    clearTimeout(userTimers[timerId].timeout);
+  if (timer.timeout) {
+    clearTimeout(timer.timeout);
   }
 
   // Удаляем таймер из БД
-  db.unset(`users.${userId}.timers.${timerId}`).write();
-  db.update('stats.activeTimers', n => n - 1).write();
+  _.unset(db.data, `users.${userId}.timers.${timerId}`);
+  db.data.stats.activeTimers--;
+  await db.write();
 
   await ctx.replyWithMarkdownV2(
     `✅ *${escapeMarkdown(username)}, таймер №${timerId} успешно удалён\\!*\n` +
-    `🗑️ *Текст напоминания:* ${escapeMarkdown(userTimers[timerId].text)}`
+    `🗑️ *Текст напоминания:* ${escapeMarkdown(timer.text)}`
   );
 });
 
 // Команда статистики для владельца
 bot.command('stats', async (ctx) => {
+  await initDB();
+  
   if (ctx.message.from.id !== OWNER_ID) {
     return ctx.reply('⛔ У вас нет прав для использования этой команды!');
   }
 
-  const stats = db.get('stats').value();
-  const activeUsers = Object.keys(db.get('users').value() || {}).length;
-
   await ctx.replyWithMarkdownV2(
     `📊 *Статистика бота:*\n\n` +
-    `🔢 *Всего таймеров создано:* ${stats.totalTimers}\n` +
-    `⏳ *Активных таймеров:* ${stats.activeTimers}\n` +
-    `👥 *Пользователей с таймерами:* ${activeUsers}`
+    `🔢 *Всего таймеров создано:* ${db.data.stats.totalTimers}\n` +
+    `⏳ *Активных таймеров:* ${db.data.stats.activeTimers}\n` +
+    `👥 *Пользователей с таймерами:* ${Object.keys(db.data.users).length}`
   );
 });
 
 // Восстановление таймеров при запуске
-function restoreTimers() {
-  const users = db.get('users').value() || {};
+async function restoreTimers() {
+  await initDB();
+  
   const now = Date.now();
-
-  for (const [userId, userData] of Object.entries(users)) {
+  for (const [userId, userData] of Object.entries(db.data.users)) {
     if (!userData.timers) continue;
 
     for (const [timerId, timer] of Object.entries(userData.timers)) {
       if (!timer.expiresAt) continue;
       
       const timeLeft = timer.expiresAt - now;
-
       if (timeLeft > 0) {
         const newTimeout = setTimeout(async () => {
           try {
@@ -253,21 +251,22 @@ function restoreTimers() {
               { parse_mode: 'MarkdownV2' }
             );
 
-            db.unset(`users.${userId}.timers.${timerId}`).write();
-            db.update('stats.activeTimers', n => n - 1).write();
+            _.unset(db.data, `users.${userId}.timers.${timerId}`);
+            db.data.stats.activeTimers--;
+            await db.write();
           } catch (error) {
             console.error('Ошибка при восстановлении таймера:', error);
           }
         }, timeLeft);
 
-        // Сохраняем новый timeout
-        db.set(`users.${userId}.timers.${timerId}.timeout`, newTimeout).write();
+        _.set(db.data, `users.${userId}.timers.${timerId}.timeout`, newTimeout);
       } else {
-        db.unset(`users.${userId}.timers.${timerId}`).write();
-        db.update('stats.activeTimers', n => n - 1).write();
+        _.unset(db.data, `users.${userId}.timers.${timerId}`);
+        db.data.stats.activeTimers--;
       }
     }
   }
+  await db.write();
 }
 
 // Стартовое сообщение
@@ -293,13 +292,14 @@ bot.catch((err, ctx) => {
 });
 
 // Запуск бота
-bot.launch()
-  .then(() => {
-    console.log('Бот запущен');
-    restoreTimers(); // Восстанавливаем таймеры из БД
-  })
-  .catch(err => console.error('Ошибка запуска бота:', err));
+(async () => {
+  await initDB();
+  await restoreTimers();
+  
+  bot.launch()
+    .then(() => console.log('Бот запущен'))
+    .catch(err => console.error('Ошибка запуска бота:', err));
 
-// Обработка завершения процесса
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  process.once('SIGINT', () => bot.stop('SIGINT'));
+  process.once('SIGTERM', () => bot.stop('SIGTERM'));
+})();
