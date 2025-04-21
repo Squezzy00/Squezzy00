@@ -113,10 +113,19 @@ bot.catch((err, ctx) => {
     console.error(`Ошибка для ${ctx.updateType}`, err);
 });
 
-// Запуск бота
-bot.launch()
-    .then(() => console.log('Бот запущен'))
-    .catch(err => console.error('Ошибка запуска бота:', err));
+// Для работы на Render.com нужно использовать webhook
+if (process.env.RENDER) {
+    const PORT = process.env.PORT || 3000;
+    bot.launch({
+        webhook: {
+            domain: process.env.WEBHOOK_URL,
+            port: PORT
+        }
+    }).then(() => console.log('Бот запущен через webhook'));
+} else {
+    // Локальный запуск через long polling
+    bot.launch().then(() => console.log('Бот запущен локально'));
+}
 
 // Обработка завершения процесса
 process.once('SIGINT', () => bot.stop('SIGINT'));
