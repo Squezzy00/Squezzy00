@@ -51,6 +51,7 @@ function getTimeString(amount, unit) {
 
 // Стартовое сообщение
 bot.start((ctx) => {
+    console.log('Обработка /start'); // Логирование
     const username = ctx.message.from.username ? `@${ctx.message.from.username}` : escapeMarkdown(ctx.message.from.first_name);
     ctx.replyWithMarkdownV2(
         `🕰️ *Привет, ${escapeMarkdown(username)}\\, Я бот\\-напоминалка\\!*\n\n` +
@@ -63,11 +64,12 @@ bot.start((ctx) => {
         "🆕 *Новые команды:*\n" +
         "`/see Кнопка1, Кнопка2` \\- показать клавиатуру (только вам)\n" +
         "`/stop` \\- скрыть клавиатуру"
-    );
+    ).catch(e => console.error('Ошибка при отправке start:', e));
 });
 
-// Команда /see - создает клавиатуру ТОЛЬКО для отправителя
+// Команда /see - должна быть ВЫШЕ обработчика напоминаний
 bot.command('see', (ctx) => {
+    console.log('Обработка /see'); // Логирование
     const userId = ctx.from.id;
     const args = ctx.message.text.split(' ').slice(1).join(' ').split(',');
 
@@ -76,25 +78,26 @@ bot.command('see', (ctx) => {
             '❌ *Неверный формат команды*\n' +
             '✨ *Используйте:* `/see Кнопка1, Кнопка2, Кнопка3`\n' +
             '🔹 *Пример:* `/see Да, Нет, Возможно`'
-        );
+        ).catch(e => console.error('Ошибка при отправке see:', e));
     }
 
     const buttons = args.map(btn => btn.trim()).filter(btn => btn !== '');
     const keyboard = Markup.keyboard(buttons.map(btn => [btn]))
         .resize()
         .oneTime()
-        .selective(); // Только для отправителя
+        .selective();
 
     activeKeyboards.set(userId, keyboard);
 
     ctx.reply('Ваша клавиатура активна:', {
         reply_markup: keyboard.reply_markup,
         reply_to_message_id: ctx.message.message_id
-    });
+    }).catch(e => console.error('Ошибка при отправке клавиатуры:', e));
 });
 
-// Команда /stop - удаляет клавиатуру
+// Команда /stop
 bot.command('stop', (ctx) => {
+    console.log('Обработка /stop'); // Логирование
     const userId = ctx.from.id;
 
     if (activeKeyboards.has(userId)) {
@@ -102,16 +105,17 @@ bot.command('stop', (ctx) => {
         ctx.reply('Клавиатура скрыта', {
             reply_markup: { remove_keyboard: true },
             reply_to_message_id: ctx.message.message_id
-        });
+        }).catch(e => console.error('Ошибка при отправке stop:', e));
     } else {
         ctx.reply('У вас нет активной клавиатуры', {
             reply_to_message_id: ctx.message.message_id
-        });
+        }).catch(e => console.error('Ошибка при отправке stop:', e));
     }
 });
 
-// Обработчик напоминаний
+// Обработчик напоминаний (должен быть НИЖЕ команды /see)
 bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
+    console.log('Обработка напоминания'); // Логирование
     const amount = parseInt(ctx.match[1]);
     const unit = ctx.match[2];
     const text = ctx.match[3];
@@ -129,33 +133,37 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
     }
 
     if (milliseconds > 0) {
-        const timeString = getTimeString(amount, unit);
-        await ctx.replyWithMarkdownV2(
-            `⏳ *${escapeMarkdown(username)}, Таймер №${currentTimerNumber} установлен\\!*\n` +
-            `🔹 *Текст:* ${escapeMarkdown(text)}\n` +
-            `⏱️ *Сработает через:* ${escapeMarkdown(timeString)}\n` +
-            `🆔 *ID таймера:* ${currentTimerNumber}`
-        );
+        try {
+            await ctx.replyWithMarkdownV2(
+                `⏳ *${escapeMarkdown(username)}, Таймер №${currentTimerNumber} установлен\\!*\n` +
+                `🔹 *Текст:* ${escapeMarkdown(text)}\n` +
+                `⏱️ *Сработает через:* ${escapeMarkdown(timeString)}\n` +
+                `🆔 *ID таймера:* ${currentTimerNumber}`
+            );
 
-        setTimeout(async () => {
-            try {
-                await ctx.telegram.sendMessage(
-                    chatId,
-                    `🔔 *${escapeMarkdown(username)}, Таймер №${currentTimerNumber}\\!*\n` +
-                    `📌 *Напоминание:* ${escapeMarkdown(text)}\n` +
-                    `🎉 Время пришло\\!`,
-                    { parse_mode: 'MarkdownV2' }
-                );
-            } catch (error) {
-                console.error('Ошибка при отправке напоминания:', error);
-            }
-        }, milliseconds);
+            setTimeout(async () => {
+                try {
+                    await ctx.telegram.sendMessage(
+                        chatId,
+                        `🔔 *${escapeMarkdown(username)}, Таймер №${currentTimerNumber}\\!*\n` +
+                        `📌 *Напоминание:* ${escapeMarkdown(text)}\n` +
+                        `🎉 Время пришло\\!`,
+                        { parse_mode: 'MarkdownV2' }
+                    );
+                } catch (error) {
+                    console.error('Ошибка при отправке напоминания:', error);
+                }
+            }, milliseconds);
+        } catch (e) {
+            console.error('Ошибка при установке таймера:', e);
+        }
     } else {
-        await ctx.reply('❌ Неверный формат времени. Используйте /1с, /5м, /2ч или /3д');
+        ctx.reply('❌ Неверный формат времени. Используйте /1с, /5м, /2ч или /3д')
+           .catch(e => console.error('Ошибка при отправке ошибки таймера:', e));
     }
 });
 
-// Обработчик текстовых сообщений (для кнопок)
+// Обработчик текстовых сообщений (должен быть ПОСЛЕДНИМ)
 bot.on('text', (ctx) => {
     const text = ctx.message.text;
     const userId = ctx.from.id;
@@ -173,7 +181,7 @@ bot.on('text', (ctx) => {
                 reply_markup: { remove_keyboard: true },
                 reply_to_message_id: ctx.message.message_id
             }
-        ).catch(e => console.error(e));
+        ).catch(e => console.error('Ошибка при скрытии клавиатуры:', e));
         activeKeyboards.delete(userId);
     }
 });
@@ -183,18 +191,10 @@ bot.catch((err, ctx) => {
     console.error(`Ошибка для ${ctx.updateType}`, err);
 });
 
-// Запуск бота
-if (process.env.RENDER) {
-    const PORT = process.env.PORT || 3000;
-    bot.launch({
-        webhook: {
-            domain: process.env.WEBHOOK_URL,
-            port: PORT
-        }
-    }).then(() => console.log('Бот запущен через webhook'));
-} else {
-    bot.launch().then(() => console.log('Бот запущен локально'));
-}
+// Запуск бота с логированием
+bot.launch()
+   .then(() => console.log('Бот успешно запущен'))
+   .catch(e => console.error('Ошибка при запуске бота:', e));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
