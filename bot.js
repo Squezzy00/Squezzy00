@@ -5,7 +5,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 let timerCounter = 1;
 const activeKeyboards = new Map();
 
-// Упрощенная функция экранирования (без MarkdownV2)
+// Упрощенная функция экранирования
 function escapeText(text) {
     return text ? text.toString() : '';
 }
@@ -43,7 +43,7 @@ bot.start((ctx) => {
         `📝 Пример: /10м Проверить почту\n\n` +
         `🆕 Новые команды:\n` +
         `/see Кнопка1, Кнопка2 - показать клавиатуру (только вам)\n` +
-        `/stop - скрыть клавиатуру`
+        `/stop - скрыть свою клавиатуру`
     ).catch(e => console.error('Ошибка при отправке start:', e));
 });
 
@@ -63,7 +63,7 @@ bot.command('see', (ctx) => {
     const buttons = args.map(btn => btn.trim()).filter(btn => btn !== '');
     const keyboard = Markup.keyboard(buttons.map(btn => [btn]))
         .resize()
-        .selective(); // Убрали .oneTime() чтобы клавиатура не скрывалась
+        .selective(); // Клавиатура только для отправителя
 
     activeKeyboards.set(userId, keyboard);
 
@@ -73,15 +73,20 @@ bot.command('see', (ctx) => {
     }).catch(e => console.error('Ошибка при отправке клавиатуры:', e));
 });
 
-// Команда /stop - исправленная версия
+// Исправленная команда /stop - скрывает только у вызывающего
 bot.command('stop', (ctx) => {
     const userId = ctx.from.id;
 
     if (activeKeyboards.has(userId)) {
-        ctx.reply('Клавиатура скрыта', {
-            reply_markup: { remove_keyboard: true },
-            reply_to_message_id: ctx.message.message_id
-        }).catch(e => console.error('Ошибка при отправке stop:', e));
+        // Отправляем скрытие клавиатуры ЛИЧНО пользователю
+        ctx.telegram.sendMessage(
+            userId, // Отправляем в ЛС, а не в чат
+            'Ваша клавиатура скрыта', 
+            {
+                reply_markup: { remove_keyboard: true }
+            }
+        ).catch(e => console.error('Ошибка при скрытии клавиатуры:', e));
+        
         activeKeyboards.delete(userId);
     } else {
         ctx.reply('У вас нет активной клавиатуры. Сначала используйте /see', {
@@ -147,7 +152,6 @@ bot.on('text', (ctx) => {
     if (text.startsWith('/')) return;
 
     if (activeKeyboards.has(userId)) {
-        // Ничего не делаем, клавиатура остается активной
         // Можно добавить логирование нажатий:
         console.log(`Пользователь ${userId} нажал: ${text}`);
     }
