@@ -49,7 +49,7 @@ function getTimeString(amount, unit) {
     return `${amount} ${word}`;
 }
 
-// Стартовое сообщение (обрабатывается в первую очередь)
+// Стартовое сообщение
 bot.start((ctx) => {
     const username = ctx.message.from.username ? `@${ctx.message.from.username}` : escapeMarkdown(ctx.message.from.first_name);
     ctx.replyWithMarkdownV2(
@@ -61,12 +61,12 @@ bot.start((ctx) => {
         "`/3д Оплатить счёт` \\- через 3 дня\n\n" +
         "📝 *Пример:* `/10м Проверить почту`\n\n" +
         "🆕 *Новые команды:*\n" +
-        "`/see Кнопка1, Кнопка2` \\- показать клавиатуру\n" +
+        "`/see Кнопка1, Кнопка2` \\- показать клавиатуру (только вам)\n" +
         "`/stop` \\- скрыть клавиатуру"
     );
 });
 
-// Обработчик команды /see
+// Команда /see - создает клавиатуру ТОЛЬКО для отправителя
 bot.command('see', (ctx) => {
     const userId = ctx.from.id;
     const args = ctx.message.text.split(' ').slice(1).join(' ').split(',');
@@ -80,17 +80,20 @@ bot.command('see', (ctx) => {
     }
 
     const buttons = args.map(btn => btn.trim()).filter(btn => btn !== '');
-    const keyboard = Markup.keyboard(buttons.map(btn => [btn])).resize();
+    const keyboard = Markup.keyboard(buttons.map(btn => [btn]))
+        .resize()
+        .selective(); // Важно! Клавиатура только для отправителя
 
     activeKeyboards.set(userId, keyboard);
 
-    ctx.reply('Выберите вариант:', {
+    // Отправляем клавиатуру через reply, чтобы она привязалась к сообщению
+    ctx.reply('Ваша клавиатура:', {
         reply_markup: keyboard.reply_markup,
         reply_to_message_id: ctx.message.message_id
     });
 });
 
-// Обработчик команды /stop
+// Команда /stop - удаляет клавиатуру
 bot.command('stop', (ctx) => {
     const userId = ctx.from.id;
 
@@ -107,7 +110,7 @@ bot.command('stop', (ctx) => {
     }
 });
 
-// Обработчик напоминаний (должен быть выше обработчика текста)
+// Обработчик напоминаний
 bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
     const amount = parseInt(ctx.match[1]);
     const unit = ctx.match[2];
@@ -152,20 +155,16 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
     }
 });
 
-// Обработчик текстовых сообщений (должен быть последним)
+// Обработчик текстовых сообщений (для кнопок)
 bot.on('text', (ctx) => {
     const text = ctx.message.text;
-    
-    // Если сообщение начинается с / - это команда, которую мы уже обработали
-    if (text.startsWith('/')) return;
+    if (text.startsWith('/')) return; // Пропускаем команды
 
     const userId = ctx.from.id;
-    
     if (activeKeyboards.has(userId)) {
-        ctx.reply(`Вы выбрали: ${text}`, {
-            reply_markup: activeKeyboards.get(userId).reply_markup,
-            reply_to_message_id: ctx.message.message_id
-        });
+        // Просто удаляем клавиатуру после нажатия (без сообщения)
+        activeKeyboards.delete(userId);
+        ctx.reply('', { reply_markup: { remove_keyboard: true } });
     }
 });
 
