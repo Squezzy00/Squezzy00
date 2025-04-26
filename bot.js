@@ -2,10 +2,10 @@ require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-let timerCounter = 1; // Счетчик таймеров
-const activeKeyboards = new Map(); // Хранит активные клавиатуры пользователей
+let timerCounter = 1;
+const activeKeyboards = new Map();
 
-// Функция для экранирования символов MarkdownV2
+// Функция для экранирования MarkdownV2
 function escapeMarkdown(text) {
     if (!text) return '';
     return text.toString()
@@ -29,7 +29,6 @@ function escapeMarkdown(text) {
         .replace(/\!/g, '\\!');
 }
 
-// Функция для форматирования времени
 function getTimeString(amount, unit) {
     const units = {
         'с': ['секунду', 'секунды', 'секунд'],
@@ -50,7 +49,7 @@ function getTimeString(amount, unit) {
     return `${amount} ${word}`;
 }
 
-// Команда /see для создания клавиатуры
+// Обработчик команды /see
 bot.command('see', (ctx) => {
     const userId = ctx.from.id;
     const args = ctx.message.text.split(' ').slice(1).join(' ').split(',');
@@ -74,7 +73,7 @@ bot.command('see', (ctx) => {
     });
 });
 
-// Команда /stop для удаления клавиатуры
+// Обработчик команды /stop
 bot.command('stop', (ctx) => {
     const userId = ctx.from.id;
 
@@ -91,24 +90,7 @@ bot.command('stop', (ctx) => {
     }
 });
 
-// Обработка нажатий на кнопки
-bot.on('text', (ctx) => {
-    const userId = ctx.from.id;
-    const text = ctx.message.text;
-
-    // Пропускаем команды
-    if (text.startsWith('/')) return;
-
-    if (activeKeyboards.has(userId)) {
-        // Отправляем ответ с сохранением клавиатуры
-        ctx.reply(`Вы выбрали: ${text}`, {
-            reply_markup: activeKeyboards.get(userId).reply_markup,
-            reply_to_message_id: ctx.message.message_id
-        });
-    }
-});
-
-// Обработчик команд напоминаний
+// Обработчик напоминаний
 bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
     const amount = parseInt(ctx.match[1]);
     const unit = ctx.match[2];
@@ -153,6 +135,22 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
     }
 });
 
+// Обработчик текстовых сообщений (только для кнопок)
+bot.on('text', (ctx) => {
+    // Пропускаем если это команда
+    if (ctx.message.text.startsWith('/')) return;
+
+    const userId = ctx.from.id;
+    const text = ctx.message.text;
+
+    if (activeKeyboards.has(userId)) {
+        ctx.reply(`Вы выбрали: ${text}`, {
+            reply_markup: activeKeyboards.get(userId).reply_markup,
+            reply_to_message_id: ctx.message.message_id
+        });
+    }
+});
+
 // Стартовое сообщение
 bot.start((ctx) => {
     const username = ctx.message.from.username ? `@${ctx.message.from.username}` : escapeMarkdown(ctx.message.from.first_name);
@@ -175,7 +173,7 @@ bot.catch((err, ctx) => {
     console.error(`Ошибка для ${ctx.updateType}`, err);
 });
 
-// Для работы на Render.com
+// Запуск бота
 if (process.env.RENDER) {
     const PORT = process.env.PORT || 3000;
     bot.launch({
@@ -185,10 +183,8 @@ if (process.env.RENDER) {
         }
     }).then(() => console.log('Бот запущен через webhook'));
 } else {
-    // Локальный запуск
     bot.launch().then(() => console.log('Бот запущен локально'));
 }
 
-// Обработка завершения процесса
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
