@@ -5,29 +5,9 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 let timerCounter = 1;
 const activeKeyboards = new Map();
 
-// Улучшенная функция для экранирования MarkdownV2
-function escapeMarkdown(text) {
-    if (!text) return '';
-    return text.toString()
-        .replace(/\_/g, '\\_')
-        .replace(/\*/g, '\\*')
-        .replace(/\[/g, '\\[')
-        .replace(/\]/g, '\\]')
-        .replace(/\(/g, '\\(')
-        .replace(/\)/g, '\\)')
-        .replace(/\~/g, '\\~')
-        .replace(/\`/g, '\\`')
-        .replace(/\>/g, '\\>')
-        .replace(/\#/g, '\\#')
-        .replace(/\+/g, '\\+')
-        .replace(/\-/g, '\\-')
-        .replace(/\=/g, '\\=')
-        .replace(/\|/g, '\\|')
-        .replace(/\{/g, '\\{')
-        .replace(/\}/g, '\\}')
-        .replace(/\./g, '\\.')
-        .replace(/\!/g, '\\!')
-        .replace(/\-/g, '\\-');
+// Упрощенная функция экранирования (без MarkdownV2)
+function escapeText(text) {
+    return text ? text.toString() : '';
 }
 
 function getTimeString(amount, unit) {
@@ -50,7 +30,7 @@ function getTimeString(amount, unit) {
     return `${amount} ${word}`;
 }
 
-// Упрощенное стартовое сообщение без MarkdownV2
+// Стартовое сообщение
 bot.start((ctx) => {
     const username = ctx.message.from.username ? `@${ctx.message.from.username}` : ctx.message.from.first_name;
     ctx.reply(
@@ -67,7 +47,7 @@ bot.start((ctx) => {
     ).catch(e => console.error('Ошибка при отправке start:', e));
 });
 
-// Команда /see
+// Команда /see - создает постоянную клавиатуру
 bot.command('see', (ctx) => {
     const userId = ctx.from.id;
     const args = ctx.message.text.split(' ').slice(1).join(' ').split(',');
@@ -83,35 +63,34 @@ bot.command('see', (ctx) => {
     const buttons = args.map(btn => btn.trim()).filter(btn => btn !== '');
     const keyboard = Markup.keyboard(buttons.map(btn => [btn]))
         .resize()
-        .oneTime()
-        .selective();
+        .selective(); // Убрали .oneTime() чтобы клавиатура не скрывалась
 
     activeKeyboards.set(userId, keyboard);
 
-    ctx.reply('Ваша клавиатура активна:', {
+    ctx.reply('Ваша клавиатура готова к использованию:', {
         reply_markup: keyboard.reply_markup,
         reply_to_message_id: ctx.message.message_id
     }).catch(e => console.error('Ошибка при отправке клавиатуры:', e));
 });
 
-// Команда /stop
+// Команда /stop - исправленная версия
 bot.command('stop', (ctx) => {
     const userId = ctx.from.id;
 
     if (activeKeyboards.has(userId)) {
-        activeKeyboards.delete(userId);
         ctx.reply('Клавиатура скрыта', {
             reply_markup: { remove_keyboard: true },
             reply_to_message_id: ctx.message.message_id
         }).catch(e => console.error('Ошибка при отправке stop:', e));
+        activeKeyboards.delete(userId);
     } else {
-        ctx.reply('У вас нет активной клавиатуры', {
+        ctx.reply('У вас нет активной клавиатуры. Сначала используйте /see', {
             reply_to_message_id: ctx.message.message_id
         }).catch(e => console.error('Ошибка при отправке stop:', e));
     }
 });
 
-// Обработчик напоминаний (без MarkdownV2)
+// Обработчик напоминаний
 bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
     const amount = parseInt(ctx.match[1]);
     const unit = ctx.match[2];
@@ -160,7 +139,7 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
     }
 });
 
-// Обработчик текстовых сообщений
+// Обработчик нажатий на кнопки (не скрывает клавиатуру)
 bot.on('text', (ctx) => {
     const text = ctx.message.text;
     const userId = ctx.from.id;
@@ -168,15 +147,9 @@ bot.on('text', (ctx) => {
     if (text.startsWith('/')) return;
 
     if (activeKeyboards.has(userId)) {
-        ctx.telegram.sendMessage(
-            ctx.chat.id,
-            ' ',
-            {
-                reply_markup: { remove_keyboard: true },
-                reply_to_message_id: ctx.message.message_id
-            }
-        ).catch(e => console.error('Ошибка при скрытии клавиатуры:', e));
-        activeKeyboards.delete(userId);
+        // Ничего не делаем, клавиатура остается активной
+        // Можно добавить логирование нажатий:
+        console.log(`Пользователь ${userId} нажал: ${text}`);
     }
 });
 
