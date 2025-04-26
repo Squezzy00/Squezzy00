@@ -82,12 +82,12 @@ bot.command('see', (ctx) => {
     const buttons = args.map(btn => btn.trim()).filter(btn => btn !== '');
     const keyboard = Markup.keyboard(buttons.map(btn => [btn]))
         .resize()
-        .selective(); // Важно! Клавиатура только для отправителя
+        .oneTime()
+        .selective(); // Только для отправителя
 
     activeKeyboards.set(userId, keyboard);
 
-    // Отправляем клавиатуру через reply, чтобы она привязалась к сообщению
-    ctx.reply('Ваша клавиатура:', {
+    ctx.reply('Ваша клавиатура активна:', {
         reply_markup: keyboard.reply_markup,
         reply_to_message_id: ctx.message.message_id
     });
@@ -158,13 +158,23 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
 // Обработчик текстовых сообщений (для кнопок)
 bot.on('text', (ctx) => {
     const text = ctx.message.text;
-    if (text.startsWith('/')) return; // Пропускаем команды
-
     const userId = ctx.from.id;
+
+    // Пропускаем команды
+    if (text.startsWith('/')) return;
+
+    // Если есть активная клавиатура для этого пользователя
     if (activeKeyboards.has(userId)) {
-        // Просто удаляем клавиатуру после нажатия (без сообщения)
+        // Просто удаляем клавиатуру без сообщения
+        ctx.telegram.sendMessage(
+            ctx.chat.id,
+            ' ',
+            {
+                reply_markup: { remove_keyboard: true },
+                reply_to_message_id: ctx.message.message_id
+            }
+        ).catch(e => console.error(e));
         activeKeyboards.delete(userId);
-        ctx.reply('', { reply_markup: { remove_keyboard: true } });
     }
 });
 
