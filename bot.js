@@ -1,8 +1,112 @@
 require('dotenv').config();
-const { Telegraf } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 let timerCounter = 1; // Счетчик таймеров
+const activeKeyboards = new Map(); // Хранит активные клавиатуры пользователей
+
+// Функция для экранирования символов MarkdownV2
+function escapeMarkdown(text) {
+    if (!text) return '';
+    return text.toString()
+        .replace(/\_/g, '\\_')
+        .replace(/\*/g, '\\*')
+        .replace(/\[/g, '\\[')
+        .replace(/\]/g, '\\]')
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)')
+        .replace(/\~/g, '\\~')
+        .replace(/\`/g, '\\`')
+        .replace(/\>/g, '\\>')
+        .replace(/\#/g, '\\#')
+        .replace(/\+/g, '\\+')
+        .replace(/\-/g, '\\-')
+        .replace(/\=/g, '\\=')
+        .replace(/\|/g, '\\|')
+        .replace(/\{/g, '\\{')
+        .replace(/\}/g, '\\}')
+        .replace(/\./g, '\\.')
+        .replace(/\!/g, '\\!');
+}
+
+// Функция для форматирования времени
+function getTimeString(amount, unit) {
+    const units = {
+        'с': ['секунду', 'секунды', 'секунд'],
+        'м': ['минуту', 'минуты', 'минут'],
+        'ч': ['час', 'часа', 'часов'],
+        'д': ['день', 'дня', 'дней']
+    };
+
+    let word;
+    if (amount % 10 === 1 && amount % 100 !== 11) {
+        word = units[unit][0];
+    } else if ([2, 3, 4].includes(amount % 10) && ![12, 13, 14].includes(amount % 100)) {
+        word = units[unit][1];
+    } else {
+        word = units[unit][2];
+    }
+
+    return `${amount} ${word}`;
+}
+
+// Команда /see для создания клавиатуры
+bot.command('see', (ctx) => {
+    const userId = ctx.from.id;
+    const args = ctx.message.text.split(' ').slice(1).join(' ').split(',');
+
+    if (args.length === 0 || args[0].trim() === '') {
+        return ctx.replyWithMarkdownV2(
+            '❌ *Неверный формат команды*\n' +
+            '✨ *Используйте:* `/see Кнопка1, Кнопка2, Кнопка3`\n' +
+            '🔹 *Пример:* `/see Да, Нет, Возможно`'
+        );
+    }
+
+    const buttons = args.map(btn => btn.trim()).filter(btn => btn !== '');
+    const keyboard = Markup.keyboard(buttons.map(btn => [btn])).resize();
+
+    activeKeyboards.set(userId, keyboard);
+
+    ctx.reply('Выберите вариант:', {
+        reply_markup: keyboard.reply_markup,
+        reply_to_message_id: ctx.message.message_id
+    });
+});
+
+// Команда /stop для удаления клавиатуры
+bot.command('stop', (ctx) => {
+    const userId = ctx.from.id;
+
+    if (activeKeyboards.has(userId)) {
+        activeKeyboards.delete(userId);
+        ctx.reply('Клавиатура скрыта', {
+            reply_markup: { remove_keyboard: true },
+            reply_to_message_id: ctx.message.message_id
+        });
+    } else {
+        ctx.reply('У вас нет активной клавиатуры', {
+            reply_to_message_id: ctx.message.message_id
+        });
+    }
+});
+
+// Обработка нажатий на кнопки
+bot.on('text', (ctx) => {
+    const userId = ctx.from.id;
+    const text = ctx.message.text;
+
+    // Пропускаем команды
+    if (text.startsWith('/')) return;
+
+    if (activeKeyboards.has(userId)) {
+        // Отправляем ответ с сохранением клавиатуры
+        ctx.reply(`Вы выбрали: ${text}`, {
+            reply_markup: activeKeyboards.get(userId).reply_markup,
+            reply_to_message_id: ctx.message.message_id
+        });
+    }
+});
 
 // Обработчик команд напоминаний
 bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
@@ -49,51 +153,6 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
     }
 });
 
-// Функция для экранирования символов MarkdownV2
-function escapeMarkdown(text) {
-    if (!text) return '';
-    return text.toString()
-        .replace(/\_/g, '\\_')
-        .replace(/\*/g, '\\*')
-        .replace(/\[/g, '\\[')
-        .replace(/\]/g, '\\]')
-        .replace(/\(/g, '\\(')
-        .replace(/\)/g, '\\)')
-        .replace(/\~/g, '\\~')
-        .replace(/\`/g, '\\`')
-        .replace(/\>/g, '\\>')
-        .replace(/\#/g, '\\#')
-        .replace(/\+/g, '\\+')
-        .replace(/\-/g, '\\-')
-        .replace(/\=/g, '\\=')
-        .replace(/\|/g, '\\|')
-        .replace(/\{/g, '\\{')
-        .replace(/\}/g, '\\}')
-        .replace(/\./g, '\\.')
-        .replace(/\!/g, '\\!');
-}
-
-// Функция для красивого отображения времени
-function getTimeString(amount, unit) {
-    const units = {
-        'с': ['секунду', 'секунды', 'секунд'],
-        'м': ['минуту', 'минуты', 'минут'],
-        'ч': ['час', 'часа', 'часов'],
-        'д': ['день', 'дня', 'дней']
-    };
-
-    let word;
-    if (amount % 10 === 1 && amount % 100 !== 11) {
-        word = units[unit][0];
-    } else if ([2, 3, 4].includes(amount % 10) && ![12, 13, 14].includes(amount % 100)) {
-        word = units[unit][1];
-    } else {
-        word = units[unit][2];
-    }
-
-    return `${amount} ${word}`;
-}
-
 // Стартовое сообщение
 bot.start((ctx) => {
     const username = ctx.message.from.username ? `@${ctx.message.from.username}` : escapeMarkdown(ctx.message.from.first_name);
@@ -104,7 +163,10 @@ bot.start((ctx) => {
         "`/5м Позвонить другу` \\- через 5 минут\n" +
         "`/2ч Принять лекарство` \\- через 2 часа\n" +
         "`/3д Оплатить счёт` \\- через 3 дня\n\n" +
-        "📝 *Пример:* `/10м Проверить почту`"
+        "📝 *Пример:* `/10м Проверить почту`\n\n" +
+        "🆕 *Новые команды:*\n" +
+        "`/see Кнопка1, Кнопка2` \\- показать клавиатуру\n" +
+        "`/stop` \\- скрыть клавиатуру"
     );
 });
 
@@ -113,7 +175,7 @@ bot.catch((err, ctx) => {
     console.error(`Ошибка для ${ctx.updateType}`, err);
 });
 
-// Для работы на Render.com нужно использовать webhook
+// Для работы на Render.com
 if (process.env.RENDER) {
     const PORT = process.env.PORT || 3000;
     bot.launch({
@@ -123,7 +185,7 @@ if (process.env.RENDER) {
         }
     }).then(() => console.log('Бот запущен через webhook'));
 } else {
-    // Локальный запуск через long polling
+    // Локальный запуск
     bot.launch().then(() => console.log('Бот запущен локально'));
 }
 
