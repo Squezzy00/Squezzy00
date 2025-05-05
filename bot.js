@@ -30,73 +30,44 @@ function escapeMarkdown(text) {
         .replace(/\!/g, '\\!');
 }
 
-// Улучшенный парсер даты и времени
+// Полностью переработанный парсер даты
 function parseDateTime(input) {
-    try {
-        input = input.trim();
-        
-        // Формат "DD.MM.YYYY HH:mm"
-        if (/^\d{1,2}\.\d{1,2}\.\d{4} \d{1,2}:\d{2}$/.test(input)) {
-            const [datePart, timePart] = input.split(' ');
-            const [day, month, year] = datePart.split('.').map(Number);
-            const [hours, minutes] = timePart.split(':').map(Number);
-            return new Date(year, month - 1, day, hours, minutes);
-        }
-        // Формат "DD.MM HH:mm"
-        else if (/^\d{1,2}\.\d{1,2} \d{1,2}:\d{2}$/.test(input)) {
-            const [datePart, timePart] = input.split(' ');
-            const [day, month] = datePart.split('.').map(Number);
-            const year = new Date().getFullYear();
-            const [hours, minutes] = timePart.split(':').map(Number);
-            return new Date(year, month - 1, day, hours, minutes);
-        }
-        // Формат "HH:mm"
-        else if (/^\d{1,2}:\d{2}$/.test(input)) {
-            const [hours, minutes] = input.split(':').map(Number);
-            const now = new Date();
-            const date = new Date(
-                now.getFullYear(),
-                now.getMonth(),
-                now.getDate(),
-                hours,
-                minutes
-            );
-            return date <= now ? new Date(date.setDate(date.getDate() + 1)) : date;
-        }
-    } catch (e) {
-        console.error('Date parsing error:', e);
+    // Удаляем лишние пробелы
+    input = input.trim();
+    
+    // Проверяем формат "DD.MM.YYYY HH:mm"
+    const fullDateRegex = /^(\d{1,2})\.(\d{1,2})\.(\d{4}) (\d{1,2}):(\d{2})$/;
+    if (fullDateRegex.test(input)) {
+        const [, day, month, year, hours, minutes] = input.match(fullDateRegex);
+        return new Date(year, month-1, day, hours, minutes);
     }
+    
+    // Проверяем формат "DD.MM HH:mm"
+    const shortDateRegex = /^(\d{1,2})\.(\d{1,2}) (\d{1,2}):(\d{2})$/;
+    if (shortDateRegex.test(input)) {
+        const [, day, month, hours, minutes] = input.match(shortDateRegex);
+        const year = new Date().getFullYear();
+        return new Date(year, month-1, day, hours, minutes);
+    }
+    
+    // Проверяем формат "HH:mm"
+    const timeRegex = /^(\d{1,2}):(\d{2})$/;
+    if (timeRegex.test(input)) {
+        const [, hours, minutes] = input.match(timeRegex);
+        const now = new Date();
+        const date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+        // Если время уже прошло, ставим на завтра
+        return date < now ? new Date(date.setDate(date.getDate() + 1)) : date;
+    }
+    
     return null;
 }
 
-// Форматирование даты для вывода
+// Форматирование даты
 function formatDate(date) {
     const pad = num => num.toString().padStart(2, '0');
-    return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    return `${pad(date.getDate())}.${pad(date.getMonth()+1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
-
-// Стартовое сообщение
-bot.start((ctx) => {
-    const username = ctx.from.username ? `@${ctx.from.username}` : escapeMarkdown(ctx.from.first_name);
-    ctx.replyWithMarkdownV2(
-        `🕰️ *Привет, ${username}, Я бот\\-напоминалка\\!*\n\n` +
-        `✨ *Как пользоваться:*\n\n` +
-        `⏰ *Установка таймеров:*\n` +
-        `\`/timer 25\\.12\\.2023 20:00 Поздравить с Рождеством\`\n` +
-        `\`/timer 15\\.08 12:00 Обед\`\n` +
-        `\`/timer 18:00 Ужин\`\n\n` +
-        `⏱ *Быстрые напоминания:*\n` +
-        `\`/5с Напомни мне\`\n` +
-        `\`/10м Позвонить другу\`\n` +
-        `\`/2ч Принять лекарство\`\n` +
-        `\`/3д Оплатить счёт\`\n\n` +
-        `🛠 *Другие команды:*\n` +
-        `\`/see Кнопка1, Кнопка2\`\n` +
-        `\`/stop\`\n` +
-        `\`/cancel ID_таймера\``,
-        { parse_mode: 'MarkdownV2' }
-    ).catch(e => console.error('Ошибка при отправке start:', e));
-});
 
 // Команда /timer
 bot.command('timer', (ctx) => {
@@ -108,7 +79,7 @@ bot.command('timer', (ctx) => {
             '/timer 04.05.2025 22:00 Привет\n' +
             '/timer 10.05 15:30 Обед\n' +
             '/timer 18:00 Ужин'
-        ).catch(e => console.error('Ошибка:', e));
+        );
     }
 
     // Объединяем дату и время
@@ -129,17 +100,17 @@ bot.command('timer', (ctx) => {
             '"DD.MM.YYYY HH:mm"\n' +
             '"DD.MM HH:mm"\n' +
             '"HH:mm"'
-        ).catch(e => console.error('Ошибка:', e));
+        );
     }
 
     const now = new Date();
     if (datetime <= now) {
-        return ctx.reply('❌ Указанное время уже прошло!').catch(e => console.error('Ошибка:', e));
+        return ctx.reply('❌ Указанное время уже прошло!');
     }
 
     const timerId = timerCounter++;
     const timeout = datetime.getTime() - now.getTime();
-    const username = ctx.from.username ? `@${ctx.from.username}` : escapeMarkdown(ctx.from.first_name);
+    const username = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
 
     const timer = setTimeout(async () => {
         try {
@@ -161,49 +132,11 @@ bot.command('timer', (ctx) => {
         `⏱ Сработает: ${formatDate(datetime)}\n` +
         `🆔 ID таймера: ${timerId}\n\n` +
         `Для отмены: /cancel ${timerId}`
-    ).catch(e => console.error('Ошибка при установке таймера:', e));
+    );
 });
 
-// Быстрые таймеры (5с, 10м и т.д.)
-bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
-    const amount = parseInt(ctx.match[1]);
-    const unit = ctx.match[2];
-    const text = ctx.match[3];
-    const timerId = timerCounter++;
-    const username = ctx.from.username ? `@${ctx.from.username}` : escapeMarkdown(ctx.from.first_name);
 
-    let milliseconds = 0;
-    switch (unit) {
-        case 'с': milliseconds = amount * 1000; break;
-        case 'м': milliseconds = amount * 60 * 1000; break;
-        case 'ч': milliseconds = amount * 60 * 60 * 1000; break;
-        case 'д': milliseconds = amount * 24 * 60 * 60 * 1000; break;
-    }
-
-    const datetime = new Date(Date.now() + milliseconds);
-    const timer = setTimeout(async () => {
-        try {
-            await ctx.reply(
-                `🔔 ${username}, Таймер №${timerId}!\n\n` +
-                `📌 Напоминание: ${text}\n` +
-                `🎉 Время пришло!`
-            );
-            activeTimers.delete(timerId);
-        } catch (error) {
-            console.error('Ошибка при отправке напоминания:', error);
-        }
-    }, milliseconds);
-
-    activeTimers.set(timerId, { timer, userId: ctx.from.id, text, datetime });
-    ctx.reply(
-        `⏳ ${username}, Таймер №${timerId} установлен!\n\n` +
-        `📌 Текст: ${text}\n` +
-        `⏱ Через: ${amount}${unit}\n` +
-        `🆔 ID таймера: ${timerId}\n\n` +
-        `Для отмены: /cancel ${timerId}`
-    ).catch(e => console.error('Ошибка при установке быстрого таймера:', e));
-});
-
+    
 // Команда /cancel
 bot.command('cancel', (ctx) => {
     const args = ctx.message.text.split(' ').slice(1);
