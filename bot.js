@@ -30,17 +30,18 @@ function escapeMarkdown(text) {
         .replace(/\!/g, '\\!');
 }
 
-// Парсер даты
+// Улучшенный парсер даты
 function parseDateTime(input) {
     input = input.trim();
     
     // Формат "DD.MM.YYYY HH:mm" или "DD.MM.YYYY"
-    const fullDateRegex = /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?: (\d{1,2}):(\d{2}))?$/;
+    const fullDateRegex = /^(\d{1,2})\.(\d{1,2})\.(\d{2,4})(?: (\d{1,2}):(\d{2}))?$/;
     if (fullDateRegex.test(input)) {
         const [, day, month, year, hours, minutes] = input.match(fullDateRegex);
+        const fullYear = year.length === 2 ? 2000 + parseInt(year) : year;
         const h = hours || '00';
         const m = minutes || '00';
-        return new Date(year, month-1, day, h, m);
+        return new Date(fullYear, month-1, day, h, m);
     }
     
     // Формат "DD.MM HH:mm" или "DD.MM"
@@ -78,7 +79,7 @@ bot.command('start', (ctx) => {
         '📌 Доступные команды:\n' +
         '/timer - установить напоминание\n' +
         '/cancel - отменить напоминание\n' +
-        '/see - показать кнопки\n' +
+        '/see - показать кнопки (только для вас)\n' +
         '/stop - убрать кнопки\n\n' +
         'Примеры:\n' +
         '/timer 05.05.2025 14:00 Встреча\n' +
@@ -118,7 +119,8 @@ bot.command('timer', (ctx) => {
             '"DD.MM.YYYY"\n' +
             '"DD.MM HH:mm"\n' +
             '"DD.MM"\n' +
-            '"HH:mm"'
+            '"HH:mm"\n\n' +
+            'Год можно указывать как 2025, так и 25'
         );
     }
 
@@ -189,7 +191,7 @@ bot.command('cancel', (ctx) => {
     ).catch(e => console.error('Ошибка при отмене таймера:', e));
 });
 
-// Команда /see - исправленная версия
+// Команда /see - исправленная версия (только для отправителя)
 bot.command('see', (ctx) => {
     const buttonsText = ctx.message.text.split(' ').slice(1).join(' ');
     if (!buttonsText) {
@@ -206,11 +208,15 @@ bot.command('see', (ctx) => {
 
     const keyboard = Markup.keyboard(
         buttons.map(btn => [btn])
-    ).resize().oneTime();
+    ).resize().oneTime().selective();
 
-    ctx.reply('Выберите действие:', keyboard)
-        .then(() => activeKeyboards.set(ctx.from.id, keyboard))
-        .catch(e => console.error('Ошибка при отправке клавиатуры:', e));
+    ctx.reply('Выберите действие:', {
+        reply_markup: keyboard.reply_markup,
+        chat_id: ctx.chat.id,
+        message_id: ctx.message.message_id
+    }).then(() => {
+        activeKeyboards.set(ctx.from.id, keyboard);
+    }).catch(e => console.error('Ошибка при отправке клавиатуры:', e));
 });
 
 // Команда /stop
