@@ -4,265 +4,156 @@ const { Telegraf, Markup } = require('telegraf');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 let timerCounter = 1;
 const activeKeyboards = new Map();
-const activeTimers = new Map();
 
-// Функция для экранирования MarkdownV2
-function escapeMarkdown(text) {
-    if (!text) return '';
-    return text.toString()
-        .replace(/\_/g, '\\_')
-        .replace(/\*/g, '\\*')
-        .replace(/\[/g, '\\[')
-        .replace(/\]/g, '\\]')
-        .replace(/\(/g, '\\(')
-        .replace(/\)/g, '\\)')
-        .replace(/\~/g, '\\~')
-        .replace(/\`/g, '\\`')
-        .replace(/\>/g, '\\>')
-        .replace(/\#/g, '\\#')
-        .replace(/\+/g, '\\+')
-        .replace(/\-/g, '\\-')
-        .replace(/\=/g, '\\=')
-        .replace(/\|/g, '\\|')
-        .replace(/\{/g, '\\{')
-        .replace(/\}/g, '\\}')
-        .replace(/\./g, '\\.')
-        .replace(/\!/g, '\\!');
+// Упрощенная функция экранирования
+function escapeText(text) {
+    return text ? text.toString() : '';
 }
 
-// Улучшенный парсер даты с правильной проверкой времени
-function parseDateTime(input) {
-    input = input.trim();
-    const now = new Date();
-    
-    // Формат "DD.MM.YYYY HH:mm" или "DD.MM.YYYY"
-    const fullDateRegex = /^(\d{1,2})\.(\d{1,2})\.(\d{2,4})(?: (\d{1,2}):(\d{2}))?$/;
-    if (fullDateRegex.test(input)) {
-        const [, day, month, year, hours, minutes] = input.match(fullDateRegex);
-        const fullYear = year.length === 2 ? 2000 + parseInt(year) : parseInt(year);
-        const h = hours ? parseInt(hours) : 0;
-        const m = minutes ? parseInt(minutes) : 0;
-        
-        const date = new Date(fullYear, parseInt(month)-1, parseInt(day), h, m);
-        if (isNaN(date.getTime())) return null;
-        return date;
-    }
-    
-    // Формат "DD.MM HH:mm" или "DD.MM"
-    const shortDateRegex = /^(\d{1,2})\.(\d{1,2})(?: (\d{1,2}):(\d{2}))?$/;
-    if (shortDateRegex.test(input)) {
-        const [, day, month, hours, minutes] = input.match(shortDateRegex);
-        const year = now.getFullYear();
-        const h = hours ? parseInt(hours) : 0;
-        const m = minutes ? parseInt(minutes) : 0;
-        
-        const date = new Date(year, parseInt(month)-1, parseInt(day), h, m);
-        if (isNaN(date.getTime())) return null;
-        return date;
-    }
-    
-    // Формат "HH:mm"
-    const timeRegex = /^(\d{1,2}):(\d{2})$/;
-    if (timeRegex.test(input)) {
-        const [, hours, minutes] = input.match(timeRegex);
-        const h = parseInt(hours);
-        const m = parseInt(minutes);
-        
-        const date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m);
-        if (isNaN(date.getTime())) return null;
-        return date < now ? new Date(date.setDate(date.getDate() + 1)) : date;
-    }
-    
-    return null;
-}
-
-// Форматирование даты
-function formatDate(date) {
-    const pad = num => num.toString().padStart(2, '0');
-    return `${pad(date.getDate())}.${pad(date.getMonth()+1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-// Команда /start
-bot.command('start', (ctx) => {
-    ctx.reply(
-        '👋 Привет! Я бот-напоминалка.\n\n' +
-        '📌 Доступные команды:\n' +
-        '/timer - установить напоминание\n' +
-        '/cancel - отменить напоминание\n' +
-        '/see - показать кнопки (только для вас)\n' +
-        '/stop - убрать кнопки\n\n' +
-        'Примеры:\n' +
-        '/timer 05.05.2025 14:00 Встреча\n' +
-        '/timer 10.05 День рождения\n' +
-        '/timer 18:00 Ужин'
-    );
-});
-
-// Команда /timer
-bot.command('timer', (ctx) => {
-    const args = ctx.message.text.split(' ').slice(1);
-    if (args.length < 2) {
-        return ctx.reply(
-            '❌ Формат: /timer дата_время напоминание\n\n' +
-            'Примеры:\n' +
-            '/timer 04.05.2025 22:00 Встреча\n' +
-            '/timer 10.05 День рождения\n' +
-            '/timer 18:00 Ужин'
-        );
-    }
-
-    let datetimeStr, text;
-    for (let i = 1; i <= 2; i++) {
-        const testStr = args.slice(0, i).join(' ');
-        if (parseDateTime(testStr)) {
-            datetimeStr = testStr;
-            text = args.slice(i).join(' ');
-            break;
-        }
-    }
-
-    if (!datetimeStr) {
-        return ctx.reply(
-            '❌ Неверный формат даты. Используйте:\n' +
-            '"DD.MM.YYYY HH:mm"\n' +
-            '"DD.MM.YYYY"\n' +
-            '"DD.MM HH:mm"\n' +
-            '"DD.MM"\n' +
-            '"HH:mm"'
-        );
-    }
-
-    const datetime = parseDateTime(datetimeStr);
-    const now = new Date();
-    
-    if (!datetime || isNaN(datetime.getTime())) {
-        return ctx.reply('❌ Неверная дата или время!');
-    }
-
-    // Добавляем буфер в 1 минуту
-    if (datetime <= new Date(now.getTime() + 60000)) {
-        return ctx.reply('❌ Указанное время должно быть минимум на 1 минуту позже текущего!');
-    }
-
-    const timerId = timerCounter++;
-    const timeout = datetime.getTime() - now.getTime();
-    const username = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
-
-    const timerInfo = {
-        userId: ctx.from.id,
-        text,
-        datetime,
-        chatId: ctx.chat.id
+function getTimeString(amount, unit) {
+    const units = {
+        'с': ['секунду', 'секунды', 'секунд'],
+        'м': ['минуту', 'минуты', 'минут'],
+        'ч': ['час', 'часа', 'часов'],
+        'д': ['день', 'дня', 'дней']
     };
-    activeTimers.set(timerId, timerInfo);
 
-    const timer = setTimeout(async () => {
-        try {
-            await ctx.telegram.sendMessage(
-                timerInfo.chatId,
-                `🔔 ${username}, Напоминание!\n\n` +
-                `📌 Текст: ${timerInfo.text}\n` +
-                `⏰ Время: ${formatDate(timerInfo.datetime)}`
-            );
-            activeTimers.delete(timerId);
-        } catch (error) {
-            console.error('Ошибка при отправке напоминания:', error);
-            try {
-                await ctx.telegram.sendMessage(
-                    timerInfo.chatId,
-                    '❌ Не удалось отправить напоминание!'
-                );
-            } catch (e) {}
-        }
-    }, timeout);
+    let word;
+    if (amount % 10 === 1 && amount % 100 !== 11) {
+        word = units[unit][0];
+    } else if ([2, 3, 4].includes(amount % 10) && ![12, 13, 14].includes(amount % 100)) {
+        word = units[unit][1];
+    } else {
+        word = units[unit][2];
+    }
 
-    timerInfo.timer = timer;
-    activeTimers.set(timerId, timerInfo);
+    return `${amount} ${word}`;
+}
 
+// Стартовое сообщение
+bot.start((ctx) => {
+    const username = ctx.message.from.username ? `@${ctx.message.from.username}` : ctx.message.from.first_name;
     ctx.reply(
-        `⏳ ${username}, Таймер №${timerId} установлен!\n\n` +
-        `📌 Текст: ${text}\n` +
-        `⏱ Сработает: ${formatDate(datetime)}\n` +
-        `🆔 ID таймера: ${timerId}\n\n` +
-        `Для отмены: /cancel ${timerId}`
-    );
+        `🕰️ Привет, ${username}, Я бот-напоминалка!\n\n` +
+        `✨ Как пользоваться:\n` +
+        `/1с Напомни мне - через 1 секунду\n` +
+        `/5м Позвонить другу - через 5 минут\n` +
+        `/2ч Принять лекарство - через 2 часа\n` +
+        `/3д Оплатить счёт - через 3 дня\n\n` +
+        `📝 Пример: /10м Проверить почту\n\n` +
+        `🆕 Новые команды:\n` +
+        `/see Кнопка1, Кнопка2 - показать клавиатуру\n` +
+        `/stop - скрыть свою клавиатуру`
+    ).catch(e => console.error('Ошибка при отправке start:', e));
 });
 
-// Команда /cancel
-bot.command('cancel', (ctx) => {
-    const args = ctx.message.text.split(' ').slice(1);
-    if (!args.length) {
-        return ctx.replyWithMarkdownV2(
-            '❌ Укажите ID таймера\nПример: `/cancel 123`',
-            { parse_mode: 'MarkdownV2' }
-        ).catch(e => console.error('Ошибка:', e));
-    }
-
-    const timerId = parseInt(args[0]);
-    if (!activeTimers.has(timerId)) {
-        return ctx.reply('❌ Таймер не найден').catch(e => console.error('Ошибка:', e));
-    }
-
-    const timer = activeTimers.get(timerId);
-    if (timer.userId !== ctx.from.id) {
-        return ctx.reply('❌ Вы можете отменять только свои таймеры').catch(e => console.error('Ошибка:', e));
-    }
-
-    clearTimeout(timer.timer);
-    activeTimers.delete(timerId);
-    ctx.replyWithMarkdownV2(
-        `✅ *Таймер №${timerId} отменён\\!*\n\n` +
-        `📌 *Текст:* ${escapeMarkdown(timer.text)}`,
-        { parse_mode: 'MarkdownV2' }
-    ).catch(e => console.error('Ошибка при отмене таймера:', e));
-});
-
-// Команда /see - только для отправителя
+// Команда /see - создает постоянную клавиатуру
 bot.command('see', (ctx) => {
-    const buttonsText = ctx.message.text.split(' ').slice(1).join(' ');
-    if (!buttonsText) {
+    const userId = ctx.from.id;
+    const args = ctx.message.text.split(' ').slice(1).join(' ').split(',');
+
+    if (args.length === 0 || args[0].trim() === '') {
         return ctx.reply(
-            '❌ Укажите кнопки через запятую\n' +
-            'Пример: /see Кнопка 1, Кнопка 2, Кнопка 3'
-        ).catch(e => console.error('Ошибка:', e));
+            '❌ Неверный формат команды\n' +
+            '✨ Используйте: /see Кнопка1, Кнопка2, Кнопка3\n' +
+            '🔹 Пример: /see Да, Нет, Возможно'
+        ).catch(e => console.error('Ошибка при отправке see:', e));
     }
 
-    const buttons = buttonsText.split(',').map(btn => btn.trim()).filter(btn => btn);
-    if (buttons.length === 0) {
-        return ctx.reply('❌ Нет валидных кнопок').catch(e => console.error('Ошибка:', e));
-    }
+    const buttons = args.map(btn => btn.trim()).filter(btn => btn !== '');
+    const keyboard = Markup.keyboard(buttons.map(btn => [btn]))
+        .resize()
+        .selective(); // Клавиатура только для отправителя
 
-    const keyboard = Markup.keyboard(
-        buttons.map(btn => [btn])
-    ).resize().oneTime().selective();
+    activeKeyboards.set(userId, keyboard);
 
-    ctx.reply('Выберите действие:', {
+    ctx.reply('Ваша клавиатура готова к использованию:', {
         reply_markup: keyboard.reply_markup,
-        chat_id: ctx.chat.id,
-        message_id: ctx.message.message_id
-    }).then(() => {
-        activeKeyboards.set(ctx.from.id, keyboard);
+        reply_to_message_id: ctx.message.message_id
     }).catch(e => console.error('Ошибка при отправке клавиатуры:', e));
 });
 
-// Команда /stop
+// Исправленная команда /stop - скрывает клавиатуру в текущем чате
 bot.command('stop', (ctx) => {
-    if (activeKeyboards.has(ctx.from.id)) {
-        ctx.reply('Клавиатура скрыта', Markup.removeKeyboard())
-           .then(() => activeKeyboards.delete(ctx.from.id))
-           .catch(e => console.error('Ошибка при скрытии клавиатуры:', e));
+    const userId = ctx.from.id;
+
+    if (activeKeyboards.has(userId)) {
+        // Отправляем пустое сообщение с удалением клавиатуры
+        ctx.reply('Клавиатура скрыта', {
+            reply_markup: { remove_keyboard: true },
+            reply_to_message_id: ctx.message.message_id
+        }).then(() => {
+            activeKeyboards.delete(userId);
+        }).catch(e => console.error('Ошибка при скрытии клавиатуры:', e));
     } else {
-        ctx.reply('Нет активной клавиатуры').catch(e => console.error('Ошибка:', e));
+        ctx.reply('У вас нет активной клавиатуры. Сначала используйте /see', {
+            reply_to_message_id: ctx.message.message_id
+        }).catch(e => console.error('Ошибка при отправке stop:', e));
     }
 });
 
-// Обработка текстовых сообщений (для кнопок)
+// Обработчик напоминаний
+bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
+    const amount = parseInt(ctx.match[1]);
+    const unit = ctx.match[2];
+    const text = ctx.match[3];
+    const userId = ctx.message.from.id;
+    const chatId = ctx.message.chat.id;
+    const username = ctx.message.from.username ? `@${ctx.message.from.username}` : ctx.message.from.first_name;
+    const currentTimerNumber = timerCounter++;
+
+    let milliseconds = 0;
+    switch (unit) {
+        case 'с': milliseconds = amount * 1000; break;
+        case 'м': milliseconds = amount * 60 * 1000; break;
+        case 'ч': milliseconds = amount * 60 * 60 * 1000; break;
+        case 'д': milliseconds = amount * 24 * 60 * 60 * 1000; break;
+    }
+
+    if (milliseconds > 0) {
+        const timeString = getTimeString(amount, unit);
+        try {
+            await ctx.reply(
+                `⏳ ${username}, Таймер №${currentTimerNumber} установлен!\n` +
+                `🔹 Текст: ${text}\n` +
+                `⏱️ Сработает через: ${timeString}\n` +
+                `🆔 ID таймера: ${currentTimerNumber}`
+            );
+
+            setTimeout(async () => {
+                try {
+                    await ctx.telegram.sendMessage(
+                        chatId,
+                        `🔔 ${username}, Таймер №${currentTimerNumber}!\n` +
+                        `📌 Напоминание: ${text}\n` +
+                        `🎉 Время пришло!`
+                    );
+                } catch (error) {
+                    console.error('Ошибка при отправке напоминания:', error);
+                }
+            }, milliseconds);
+        } catch (e) {
+            console.error('Ошибка при установке таймера:', e);
+        }
+    } else {
+        ctx.reply('❌ Неверный формат времени. Используйте /1с, /5м, /2ч или /3д')
+           .catch(e => console.error('Ошибка при отправке ошибки таймера:', e));
+    }
+});
+
+// Обработчик нажатий на кнопки (не скрывает клавиатуру)
 bot.on('text', (ctx) => {
-    if (ctx.message.text.startsWith('/')) return;
-    
-    if (activeKeyboards.has(ctx.from.id)) {
-        console.log(`Пользователь ${ctx.from.id} нажал: ${ctx.message.text}`);
-        // Можно добавить логику обработки нажатий
+    const text = ctx.message.text;
+    const userId = ctx.from.id;
+
+    if (text.startsWith('/')) return;
+
+    if (activeKeyboards.has(userId)) {
+        // Логируем нажатия (можно убрать)
+        console.log(`Пользователь ${userId} нажал: ${text}`);
+        
+        // Клавиатура остается активной
+        // Можно добавить обработку нажатий если нужно
     }
 });
 
@@ -278,254 +169,9 @@ bot.launch({
         domain: process.env.WEBHOOK_URL,
         port: PORT
     } : undefined
-}).then(() => console.log('Бот запущен'));
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));    
-    // Формат "DD.MM.YYYY HH:mm" или "DD.MM.YYYY"
-    const fullDateRegex = /^(\d{1,2})\.(\d{1,2})\.(\d{2,4})(?: (\d{1,2}):(\d{2}))?$/;
-    if (fullDateRegex.test(input)) {
-        const [, day, month, year, hours, minutes] = input.match(fullDateRegex);
-        const fullYear = year.length === 2 ? 2000 + parseInt(year) : parseInt(year);
-        const h = hours ? parseInt(hours) : 0;
-        const m = minutes ? parseInt(minutes) : 0;
-        
-        const date = new Date(fullYear, parseInt(month)-1, parseInt(day), h, m);
-        if (isNaN(date.getTime())) return null;
-        return date;
-    }
-    
-    // Формат "DD.MM HH:mm" или "DD.MM"
-    const shortDateRegex = /^(\d{1,2})\.(\d{1,2})(?: (\d{1,2}):(\d{2}))?$/;
-    if (shortDateRegex.test(input)) {
-        const [, day, month, hours, minutes] = input.match(shortDateRegex);
-        const year = now.getFullYear();
-        const h = hours ? parseInt(hours) : 0;
-        const m = minutes ? parseInt(minutes) : 0;
-        
-        const date = new Date(year, parseInt(month)-1, parseInt(day), h, m);
-        if (isNaN(date.getTime())) return null;
-        return date;
-    }
-    
-    // Формат "HH:mm"
-    const timeRegex = /^(\d{1,2}):(\d{2})$/;
-    if (timeRegex.test(input)) {
-        const [, hours, minutes] = input.match(timeRegex);
-        const h = parseInt(hours);
-        const m = parseInt(minutes);
-        
-        const date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m);
-        if (isNaN(date.getTime())) return null;
-        return date < now ? new Date(date.setDate(date.getDate() + 1)) : date;
-    }
-    
-    return null;
-}
-
-// Форматирование даты
-function formatDate(date) {
-    const pad = num => num.toString().padStart(2, '0');
-    return `${pad(date.getDate())}.${pad(date.getMonth()+1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-// Команда /start
-bot.command('start', (ctx) => {
-    ctx.reply(
-        '👋 Привет! Я бот-напоминалка.\n\n' +
-        '📌 Доступные команды:\n' +
-        '/timer - установить напоминание\n' +
-        '/cancel - отменить напоминание\n' +
-        '/see - показать кнопки (только для вас)\n' +
-        '/stop - убрать кнопки\n\n' +
-        'Примеры:\n' +
-        '/timer 05.05.2025 14:00 Встреча\n' +
-        '/timer 10.05 День рождения\n' +
-        '/timer 18:00 Ужин'
-    );
-});
-
-// Команда /timer
-bot.command('timer', (ctx) => {
-    const args = ctx.message.text.split(' ').slice(1);
-    if (args.length < 2) {
-        return ctx.reply(
-            '❌ Формат: /timer дата_время напоминание\n\n' +
-            'Примеры:\n' +
-            '/timer 04.05.2025 22:00 Встреча\n' +
-            '/timer 10.05 День рождения\n' +
-            '/timer 18:00 Ужин'
-        );
-    }
-
-    let datetimeStr, text;
-    for (let i = 1; i <= 2; i++) {
-        const testStr = args.slice(0, i).join(' ');
-        if (parseDateTime(testStr)) {
-            datetimeStr = testStr;
-            text = args.slice(i).join(' ');
-            break;
-        }
-    }
-
-    if (!datetimeStr) {
-        return ctx.reply(
-            '❌ Неверный формат даты. Используйте:\n' +
-            '"DD.MM.YYYY HH:mm"\n' +
-            '"DD.MM.YYYY"\n' +
-            '"DD.MM HH:mm"\n' +
-            '"DD.MM"\n' +
-            '"HH:mm"'
-        );
-    }
-
-    const datetime = parseDateTime(datetimeStr);
-    const now = new Date();
-    
-    if (!datetime || isNaN(datetime.getTime())) {
-        return ctx.reply('❌ Неверная дата или время!');
-    }
-
-    // Добавляем буфер в 1 минуту
-    if (datetime <= new Date(now.getTime() + 60000)) {
-        return ctx.reply('❌ Указанное время должно быть минимум на 1 минуту позже текущего!');
-    }
-
-    const timerId = timerCounter++;
-    const timeout = datetime.getTime() - now.getTime();
-    const username = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
-
-    const timerInfo = {
-        userId: ctx.from.id,
-        text,
-        datetime,
-        chatId: ctx.chat.id
-    };
-    activeTimers.set(timerId, timerInfo);
-
-    const timer = setTimeout(async () => {
-        try {
-            await ctx.telegram.sendMessage(
-                timerInfo.chatId,
-                `🔔 ${username}, Напоминание!\n\n` +
-                `📌 Текст: ${timerInfo.text}\n` +
-                `⏰ Время: ${formatDate(timerInfo.datetime)}`
-            );
-            activeTimers.delete(timerId);
-        } catch (error) {
-            console.error('Ошибка при отправке напоминания:', error);
-            try {
-                await ctx.telegram.sendMessage(
-                    timerInfo.chatId,
-                    '❌ Не удалось отправить напоминание!'
-                );
-            } catch (e) {}
-        }
-    }, timeout);
-
-    timerInfo.timer = timer;
-    activeTimers.set(timerId, timerInfo);
-
-    ctx.reply(
-        `⏳ ${username}, Таймер №${timerId} установлен!\n\n` +
-        `📌 Текст: ${text}\n` +
-        `⏱ Сработает: ${formatDate(datetime)}\n` +
-        `🆔 ID таймера: ${timerId}\n\n` +
-        `Для отмены: /cancel ${timerId}`
-    );
-});
-
-// Команда /cancel
-bot.command('cancel', (ctx) => {
-    const args = ctx.message.text.split(' ').slice(1);
-    if (!args.length) {
-        return ctx.replyWithMarkdownV2(
-            '❌ Укажите ID таймера\nПример: `/cancel 123`',
-            { parse_mode: 'MarkdownV2' }
-        ).catch(e => console.error('Ошибка:', e));
-    }
-
-    const timerId = parseInt(args[0]);
-    if (!activeTimers.has(timerId)) {
-        return ctx.reply('❌ Таймер не найден').catch(e => console.error('Ошибка:', e));
-    }
-
-    const timer = activeTimers.get(timerId);
-    if (timer.userId !== ctx.from.id) {
-        return ctx.reply('❌ Вы можете отменять только свои таймеры').catch(e => console.error('Ошибка:', e));
-    }
-
-    clearTimeout(timer.timer);
-    activeTimers.delete(timerId);
-    ctx.replyWithMarkdownV2(
-        `✅ *Таймер №${timerId} отменён\\!*\n\n` +
-        `📌 *Текст:* ${escapeMarkdown(timer.text)}`,
-        { parse_mode: 'MarkdownV2' }
-    ).catch(e => console.error('Ошибка при отмене таймера:', e));
-});
-
-// Команда /see - только для отправителя
-bot.command('see', (ctx) => {
-    const buttonsText = ctx.message.text.split(' ').slice(1).join(' ');
-    if (!buttonsText) {
-        return ctx.reply(
-            '❌ Укажите кнопки через запятую\n' +
-            'Пример: /see Кнопка 1, Кнопка 2, Кнопка 3'
-        ).catch(e => console.error('Ошибка:', e));
-    }
-
-    const buttons = buttonsText.split(',').map(btn => btn.trim()).filter(btn => btn);
-    if (buttons.length === 0) {
-        return ctx.reply('❌ Нет валидных кнопок').catch(e => console.error('Ошибка:', e));
-    }
-
-    const keyboard = Markup.keyboard(
-        buttons.map(btn => [btn])
-    ).resize().oneTime().selective();
-
-    ctx.reply('Выберите действие:', {
-        reply_markup: keyboard.reply_markup,
-        chat_id: ctx.chat.id,
-        message_id: ctx.message.message_id
-    }).then(() => {
-        activeKeyboards.set(ctx.from.id, keyboard);
-    }).catch(e => console.error('Ошибка при отправке клавиатуры:', e));
-});
-
-// Команда /stop
-bot.command('stop', (ctx) => {
-    if (activeKeyboards.has(ctx.from.id)) {
-        ctx.reply('Клавиатура скрыта', Markup.removeKeyboard())
-           .then(() => activeKeyboards.delete(ctx.from.id))
-           .catch(e => console.error('Ошибка при скрытии клавиатуры:', e));
-    } else {
-        ctx.reply('Нет активной клавиатуры').catch(e => console.error('Ошибка:', e));
-    }
-});
-
-// Обработка текстовых сообщений (для кнопок)
-bot.on('text', (ctx) => {
-    if (ctx.message.text.startsWith('/')) return;
-    
-    if (activeKeyboards.has(ctx.from.id)) {
-        console.log(`Пользователь ${ctx.from.id} нажал: ${ctx.message.text}`);
-        // Можно добавить логику обработки нажатий
-    }
-});
-
-// Обработка ошибок
-bot.catch((err, ctx) => {
-    console.error(`Ошибка для ${ctx.updateType}`, err);
-});
-
-// Запуск бота
-const PORT = process.env.PORT || 3000;
-bot.launch({
-    webhook: process.env.RENDER ? {
-        domain: process.env.WEBHOOK_URL,
-        port: PORT
-    } : undefined
-}).then(() => console.log('Бот запущен'));
+})
+.then(() => console.log('Бот успешно запущен'))
+.catch(e => console.error('Ошибка при запуске бота:', e));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
