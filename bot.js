@@ -1,5 +1,7 @@
 require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
+const fs = require('fs');
+const path = require('path');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const BOT_OWNER_ID = 5005387093; // Ваш ID аккаунта
@@ -9,14 +11,43 @@ const activeTimers = new Map();
 const chatButtons = new Map();
 const disabledCommands = new Set();
 
+// Файл для хранения chat_id
+const CHATS_FILE = path.join(__dirname, 'chats.json');
+
+// Загрузка сохраненных чатов
+let knownChats = new Set();
+try {
+    if (fs.existsSync(CHATS_FILE)) {
+        const data = fs.readFileSync(CHATS_FILE, 'utf-8');
+        knownChats = new Set(JSON.parse(data));
+    }
+} catch (e) {
+    console.error('Ошибка загрузки chats.json:', e);
+}
+
+// Сохранение чатов
+function saveChats() {
+    try {
+        fs.writeFileSync(CHATS_FILE, JSON.stringify([...knownChats]), 'utf-8');
+    } catch (e) {
+        console.error('Ошибка сохранения chats.json:', e);
+    }
+}
+
+// Middleware для сохранения chat_id
+bot.use((ctx, next) => {
+    if (ctx.chat) {
+        if (!knownChats.has(ctx.chat.id)) {
+            knownChats.add(ctx.chat.id);
+            saveChats();
+        }
+    }
+    return next();
+});
+
 // Проверка на владельца
 function isOwner(ctx) {
     return ctx.from.id === BOT_OWNER_ID;
-}
-
-// Упрощенная функция экранирования
-function escapeText(text) {
-    return text ? text.toString() : '';
 }
 
 function getTimeString(amount, unit) {
@@ -66,8 +97,7 @@ bot.start((ctx) => {
         `/stop - скрыть свою клавиатуру\n` +
         `/timers - показать активные таймеры\n` +
         `/cancel [ID] - отменить таймер\n` +
-        `/open - показать общие кнопки чата\n` +
-        `/broadcast - рассылка сообщений (только для владельца)\n\n` +
+        `/open - показать общие кнопки чата\n\n` +
         `DEVELOPER: @SQUEZZY00`
     ).catch(e => console.error('Ошибка при отправке start:', e));
 });
@@ -261,37 +291,31 @@ bot.command('broadcast', async (ctx) => {
     }
 
     try {
-        // Получаем список всех чатов, где есть бот (используем getUpdates)
-        const updates = await ctx.telegram.getUpdates();
-        const uniqueChats = new Set();
-        
-        // Собираем уникальные chat_id из истории обновлений
-        updates.forEach(update => {
-            if (update.message && update.message.chat) {
-                uniqueChats.add(update.message.chat.id);
-            }
-        });
-
-        // Отправляем сообщение в каждый чат
+        const chats = [...knownChats];
         let successCount = 0;
         let failCount = 0;
-        
-        for (const chatId of uniqueChats) {
+
+        await ctx.reply(`⏳ Начинаю рассылку для ${chats.length} чатов...`);
+
+        for (const chatId of chats) {
             try {
                 await ctx.telegram.sendMessage(
                     chatId, 
                     `📢 Рассылка от администратора:\n\n${messageText}\n\nDEVELOPER: @SQUEZZY00`
                 );
                 successCount++;
-                // Небольшая задержка, чтобы не превысить лимиты Telegram
+                // Задержка чтобы не превысить лимиты Telegram
                 await new Promise(resolve => setTimeout(resolve, 100));
             } catch (error) {
                 console.error(`Ошибка при отправке в чат ${chatId}:`, error);
                 failCount++;
+                // Удаляем нерабочие chat_id из списка
+                knownChats.delete(chatId);
             }
         }
 
-        ctx.reply(`✅ Рассылка завершена\nУспешно: ${successCount}\nНе удалось: ${failCount}`);
+        saveChats();
+        await ctx.reply(`✅ Рассылка завершена\nУспешно: ${successCount}\nНе удалось: ${failCount}\nВсего чатов: ${knownChats.size}`);
     } catch (error) {
         console.error('Ошибка при выполнении рассылки:', error);
         ctx.reply('❌ Произошла ошибка при выполнении рассылки');
@@ -458,5 +482,11 @@ bot.launch({
 .then(() => console.log('Бот успешно запущен'))
 .catch(e => console.error('Ошибка при запуске бота:', e));
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+process.once('SIGINT', () => {
+    saveChats();
+    bot.stop('SIGINT');
+});
+process.once('SIGTERM', () => {
+    saveChats();
+    bot.stop('SIGTERM');
+});
