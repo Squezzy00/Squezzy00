@@ -101,25 +101,61 @@ bot.command('broadcast', async (ctx) => {
 
         for (const chat of groupChats) {
             try {
+// Команда для рассылки сообщений (только для владельца)
+bot.command('broadcast', async (ctx) => {
+    if (!isOwner(ctx)) {
+        return ctx.reply('❌ Эта команда только для владельца бота');
+    }
+
+    const messageText = ctx.message.text.split(' ').slice(1).join(' ');
+    if (!messageText) {
+        return ctx.reply('❌ Укажите текст для рассылки\nПример: /broadcast Важное объявление!');
+    }
+
+    try {
+        // Временное хранилище чатов
+        const groupChats = new Set();
+        
+        // Получаем последние обновления (до 100 чатов)
+        const updates = await ctx.telegram.getUpdates({ limit: 100, timeout: 0 });
+        
+        // Собираем уникальные ID групповых чатов
+        updates.forEach(update => {
+            if (update.message?.chat && update.message.chat.type !== 'private') {
+                groupChats.add(update.message.chat.id);
+            }
+        });
+
+        if (groupChats.size === 0) {
+            return ctx.reply('❌ Бот не состоит ни в одной группе или группы не активны\n\nDEVELOPER: @SQUEZZY00');
+        }
+
+        let successCount = 0;
+        const failedChats = [];
+
+        // Отправляем в каждый чат
+        for (const chatId of groupChats) {
+            try {
                 await ctx.telegram.sendMessage(
-                    chat.id,
+                    chatId,
                     `📢 Рассылка от администратора:\n\n${messageText}\n\nDEVELOPER: @SQUEZZY00`
                 );
                 successCount++;
-                // Задержка между сообщениями, чтобы не попасть в лимиты Telegram
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // Небольшая задержка между сообщениями
+                await new Promise(resolve => setTimeout(resolve, 300));
             } catch (e) {
-                console.error(`Ошибка при отправке в чат ${chat.id}:`, e);
-                failCount++;
+                console.error(`Ошибка при отправке в чат ${chatId}:`, e);
+                failedChats.push(chatId);
             }
         }
 
         ctx.reply(
             `✅ Рассылка завершена!\n` +
             `Успешно отправлено: ${successCount} чатов\n` +
-            `Не удалось отправить: ${failCount} чатов\n\n` +
+            `Не удалось отправить: ${failedChats.length} чатов\n\n` +
             `DEVELOPER: @SQUEZZY00`
         );
+        
     } catch (e) {
         console.error('Ошибка при рассылке:', e);
         ctx.reply('❌ Произошла ошибка при рассылке\n\nDEVELOPER: @SQUEZZY00');
