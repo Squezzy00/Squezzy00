@@ -4,6 +4,7 @@ const { Telegraf, Markup } = require('telegraf');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 let timerCounter = 1;
 const activeKeyboards = new Map();
+const activeTimers = new Map(); // Хранилище активных таймеров
 
 // Упрощенная функция экранирования
 function escapeText(text) {
@@ -43,7 +44,10 @@ bot.start((ctx) => {
         `📝 Пример: /10м Проверить почту\n\n` +
         `🆕 Новые команды:\n` +
         `/see Кнопка1, Кнопка2 - показать клавиатуру\n` +
-        `/stop - скрыть свою клавиатуру`
+        `/stop - скрыть свою клавиатуру\n` +
+        `/timers - показать активные таймеры\n` +
+        `/cancel [ID] - отменить таймер\n\n` +
+        `DEVELOPER: @SQUEZZY00`
     ).catch(e => console.error('Ошибка при отправке start:', e));
 });
 
@@ -56,40 +60,70 @@ bot.command('see', (ctx) => {
         return ctx.reply(
             '❌ Неверный формат команды\n' +
             '✨ Используйте: /see Кнопка1, Кнопка2, Кнопка3\n' +
-            '🔹 Пример: /see Да, Нет, Возможно'
+            '🔹 Пример: /see Да, Нет, Возможно\n\n' +
+            'DEVELOPER: @SQUEZZY00'
         ).catch(e => console.error('Ошибка при отправке see:', e));
     }
 
     const buttons = args.map(btn => btn.trim()).filter(btn => btn !== '');
     const keyboard = Markup.keyboard(buttons.map(btn => [btn]))
         .resize()
-        .selective(); // Клавиатура только для отправителя
+        .selective();
 
     activeKeyboards.set(userId, keyboard);
 
-    ctx.reply('Ваша клавиатура готова к использованию:', {
+    ctx.reply('Ваша клавиатура открыта и готова к использованию:\n\nDEVELOPER: @SQUEZZY00', {
         reply_markup: keyboard.reply_markup,
         reply_to_message_id: ctx.message.message_id
     }).catch(e => console.error('Ошибка при отправке клавиатуры:', e));
 });
 
-// Исправленная команда /stop - скрывает клавиатуру в текущем чате
-bot.command('stop', (ctx) => {
+// Команда для просмотра активных таймеров
+bot.command('timers', (ctx) => {
     const userId = ctx.from.id;
+    const userTimers = Array.from(activeTimers.entries())
+        .filter(([_, timer]) => timer.userId === userId);
 
-    if (activeKeyboards.has(userId)) {
-        // Отправляем пустое сообщение с удалением клавиатуры
-        ctx.reply('Клавиатура скрыта', {
-            reply_markup: { remove_keyboard: true },
-            reply_to_message_id: ctx.message.message_id
-        }).then(() => {
-            activeKeyboards.delete(userId);
-        }).catch(e => console.error('Ошибка при скрытии клавиатуры:', e));
-    } else {
-        ctx.reply('У вас нет активной клавиатуры. Сначала используйте /see', {
-            reply_to_message_id: ctx.message.message_id
-        }).catch(e => console.error('Ошибка при отправке stop:', e));
+    if (userTimers.length === 0) {
+        return ctx.reply('У вас нет активных таймеров.\n\nDEVELOPER: @SQUEZZY00')
+            .catch(e => console.error('Ошибка при отправке timers:', e));
     }
+
+    let message = '⏳ Ваши активные таймеры:\n\n';
+    userTimers.forEach(([timerId, timer]) => {
+        message += `🆔 ID: ${timerId}\n` +
+                  `📝 Текст: ${timer.text}\n` +
+                  `⏱️ Осталось: ${getTimeString(timer.amount, timer.unit)}\n\n`;
+    });
+    message += 'Для отмены используйте /cancel [ID]\n\nDEVELOPER: @SQUEZZY00';
+
+    ctx.reply(message).catch(e => console.error('Ошибка при отправке списка таймеров:', e));
+});
+
+// Команда для отмены таймера
+bot.command('cancel', (ctx) => {
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) {
+        return ctx.reply('❌ Укажите ID таймера для отмены\nПример: /cancel 5\n\nDEVELOPER: @SQUEZZY00')
+            .catch(e => console.error('Ошибка при отправке cancel:', e));
+    }
+
+    const timerId = parseInt(args[1]);
+    if (isNaN(timerId)) {
+        return ctx.reply('❌ Неверный ID таймера\n\nDEVELOPER: @SQUEZZY00')
+            .catch(e => console.error('Ошибка при отправке cancel:', e));
+    }
+
+    const timer = activeTimers.get(timerId);
+    if (!timer || timer.userId !== ctx.from.id) {
+        return ctx.reply('❌ Таймер не найден или не принадлежит вам\n\nDEVELOPER: @SQUEZZY00')
+            .catch(e => console.error('Ошибка при отправке cancel:', e));
+    }
+
+    clearTimeout(timer.timeout);
+    activeTimers.delete(timerId);
+    ctx.reply(`✅ Таймер #${timerId} отменен\n\nDEVELOPER: @SQUEZZY00`)
+        .catch(e => console.error('Ошибка при отправке подтверждения отмены:', e));
 });
 
 // Обработчик напоминаний
@@ -117,29 +151,115 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
                 `⏳ ${username}, Таймер №${currentTimerNumber} установлен!\n` +
                 `🔹 Текст: ${text}\n` +
                 `⏱️ Сработает через: ${timeString}\n` +
-                `🆔 ID таймера: ${currentTimerNumber}`
+                `🆔 ID таймера: ${currentTimerNumber}\n\n` +
+                `DEVELOPER: @SQUEZZY00`
             );
 
-            setTimeout(async () => {
+            const timeout = setTimeout(async () => {
                 try {
+                    const keyboard = Markup.inlineKeyboard([
+                        Markup.button.callback('🔄 Установить заново', `restart_${amount}${unit}_${text}`)
+                    ]);
+                    
                     await ctx.telegram.sendMessage(
                         chatId,
                         `🔔 ${username}, Таймер №${currentTimerNumber}!\n` +
                         `📌 Напоминание: ${text}\n` +
-                        `🎉 Время пришло!`
+                        `🎉 Время пришло!\n\n` +
+                        `DEVELOPER: @SQUEZZY00`,
+                        { reply_markup: keyboard.reply_markup }
                     );
+                    activeTimers.delete(currentTimerNumber);
                 } catch (error) {
                     console.error('Ошибка при отправке напоминания:', error);
                 }
             }, milliseconds);
+
+            activeTimers.set(currentTimerNumber, {
+                userId,
+                chatId,
+                amount,
+                unit,
+                text,
+                timeout
+            });
         } catch (e) {
             console.error('Ошибка при установке таймера:', e);
         }
     } else {
-        ctx.reply('❌ Неверный формат времени. Используйте /1с, /5м, /2ч или /3д')
+        ctx.reply('❌ Неверный формат времени. Используйте /1с, /5м, /2ч или /3д\n\nDEVELOPER: @SQUEZZY00')
            .catch(e => console.error('Ошибка при отправке ошибки таймера:', e));
     }
 });
+
+// Обработчик инлайн-кнопки "Установить заново"
+bot.action(/^restart_(\d+)(с|м|ч|д)_(.+)$/, async (ctx) => {
+    const amount = parseInt(ctx.match[1]);
+    const unit = ctx.match[2];
+    const text = ctx.match[3];
+    const userId = ctx.from.id;
+    const chatId = ctx.callbackQuery.message.chat.id;
+    const username = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
+    const currentTimerNumber = timerCounter++;
+
+    let milliseconds = 0;
+    switch (unit) {
+        case 'с': milliseconds = amount * 1000; break;
+        case 'м': milliseconds = amount * 60 * 1000; break;
+        case 'ч': milliseconds = amount * 60 * 60 * 1000; break;
+        case 'д': milliseconds = amount * 24 * 60 * 60 * 1000; break;
+    }
+
+    if (milliseconds > 0) {
+        const timeString = getTimeString(amount, unit);
+        try {
+            await ctx.reply(
+                `⏳ ${username}, Таймер №${currentTimerNumber} установлен!\n` +
+                `🔹 Текст: ${text}\n` +
+                `⏱️ Сработает через: ${timeString}\n` +
+                `🆔 ID таймера: ${currentTimerNumber}\n\n` +
+                `DEVELOPER: @SQUEZZY00`
+            );
+
+            const timeout = setTimeout(async () => {
+                try {
+                    const keyboard = Markup.inlineKeyboard([
+                        Markup.button.callback('🔄 Установить заново', `restart_${amount}${unit}_${text}`)
+                    ]);
+                    
+                    await ctx.telegram.sendMessage(
+                        chatId,
+                        `🔔 ${username}, Таймер №${currentTimerNumber}!\n` +
+                        `📌 Напоминание: ${text}\n` +
+                        `🎉 Время пришло!\n\n` +
+                        `DEVELOPER: @SQUEZZY00`,
+                        { reply_markup: keyboard.reply_markup }
+                    );
+                    activeTimers.delete(currentTimerNumber);
+                } catch (error) {
+                    console.error('Ошибка при отправке напоминания:', error);
+                }
+            }, milliseconds);
+
+            activeTimers.set(currentTimerNumber, {
+                userId,
+                chatId,
+                amount,
+                unit,
+                text,
+                timeout
+            });
+
+            await ctx.answerCbQuery('✅ Таймер установлен заново');
+        } catch (e) {
+            console.error('Ошибка при установке таймера:', e);
+            await ctx.answerCbQuery('❌ Ошибка при установке таймера');
+        }
+    }
+});
+
+// Остальной код без изменений...
+// (обработчик текста, обработка ошибок, запуск бота)
 
 // Обработчик нажатий на кнопки (не скрывает клавиатуру)
 bot.on('text', (ctx) => {
@@ -149,11 +269,7 @@ bot.on('text', (ctx) => {
     if (text.startsWith('/')) return;
 
     if (activeKeyboards.has(userId)) {
-        // Логируем нажатия (можно убрать)
         console.log(`Пользователь ${userId} нажал: ${text}`);
-        
-        // Клавиатура остается активной
-        // Можно добавить обработку нажатий если нужно
     }
 });
 
