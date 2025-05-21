@@ -50,6 +50,18 @@ function isOwner(ctx) {
     return ctx.from.id === BOT_OWNER_ID;
 }
 
+// Проверка на администратора чата
+async function isAdmin(ctx) {
+    if (ctx.chat.type === 'private') return false;
+    try {
+        const member = await ctx.getChatMember(ctx.from.id);
+        return ['creator', 'administrator'].includes(member.status);
+    } catch (e) {
+        console.error('Ошибка проверки администратора:', e);
+        return false;
+    }
+}
+
 function getTimeString(amount, unit) {
     const units = {
         'с': ['секунду', 'секунды', 'секунд'],
@@ -164,10 +176,13 @@ bot.command('cmdon', (ctx) => {
     ctx.reply(`✅ Команда /${command} включена`);
 });
 
-// Команда для установки общих кнопок чата
-bot.command('set', (ctx) => {
-    if (!isOwner(ctx)) {
-        return ctx.reply('❌ Эта команда только для владельца бота');
+// Команда для установки общих кнопок чата (доступна владельцу и админам чата)
+bot.command('set', async (ctx) => {
+    // Проверка прав (владелец или админ)
+    const isAdminOrOwner = isOwner(ctx) || (ctx.chat.type !== 'private' && await isAdmin(ctx));
+    
+    if (!isAdminOrOwner) {
+        return ctx.reply('❌ Эта команда только для владельца бота или администраторов чата');
     }
 
     const chatId = ctx.chat.id;
