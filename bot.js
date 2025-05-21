@@ -2,9 +2,17 @@ require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
+const BOT_OWNER_ID = 5005387093; // Ваш ID аккаунта
 let timerCounter = 1;
 const activeKeyboards = new Map();
-const activeTimers = new Map(); // Хранилище активных таймеров
+const activeTimers = new Map();
+const chatButtons = new Map();
+const disabledCommands = new Set();
+
+// Проверка на владельца
+function isOwner(ctx) {
+    return ctx.from.id === BOT_OWNER_ID;
+}
 
 // Упрощенная функция экранирования
 function escapeText(text) {
@@ -31,6 +39,17 @@ function getTimeString(amount, unit) {
     return `${amount} ${word}`;
 }
 
+// Middleware для проверки отключенных команд
+bot.use((ctx, next) => {
+    if (ctx.message && ctx.message.text && ctx.message.text.startsWith('/')) {
+        const command = ctx.message.text.split(' ')[0].slice(1).toLowerCase();
+        if (disabledCommands.has(command) && !isOwner(ctx)) {
+            return ctx.reply(`❌ Команда /${command} временно отключена`);
+        }
+    }
+    return next();
+});
+
 // Стартовое сообщение
 bot.start((ctx) => {
     const username = ctx.message.from.username ? `@${ctx.message.from.username}` : ctx.message.from.first_name;
@@ -46,7 +65,8 @@ bot.start((ctx) => {
         `/see Кнопка1, Кнопка2 - показать клавиатуру\n` +
         `/stop - скрыть свою клавиатуру\n` +
         `/timers - показать активные таймеры\n` +
-        `/cancel [ID] - отменить таймер\n\n` +
+        `/cancel [ID] - отменить таймер\n` +
+        `/open - показать общие кнопки чата\n\n` +
         `DEVELOPER: @SQUEZZY00`
     ).catch(e => console.error('Ошибка при отправке start:', e));
 });
@@ -66,7 +86,12 @@ bot.command('see', (ctx) => {
     }
 
     const buttons = args.map(btn => btn.trim()).filter(btn => btn !== '');
-    const keyboard = Markup.keyboard(buttons.map(btn => [btn]))
+    const buttonRows = [];
+    for (let i = 0; i < buttons.length; i += 4) {
+        buttonRows.push(buttons.slice(i, i + 4));
+    }
+
+    const keyboard = Markup.keyboard(buttonRows)
         .resize()
         .selective();
 
@@ -78,7 +103,104 @@ bot.command('see', (ctx) => {
     }).catch(e => console.error('Ошибка при отправке клавиатуры:', e));
 });
 
-// Команда для просмотра активных таймеров
+// Команда для отключения команд
+bot.command('cmdoff', (ctx) => {
+    if (!isOwner(ctx)) {
+        return ctx.reply('❌ Эта команда только для владельца бота');
+    }
+
+    const command = ctx.message.text.split(' ')[1];
+    if (!command) {
+        return ctx.reply('❌ Укажите команду для отключения\nПример: /cmdoff see');
+    }
+
+    disabledCommands.add(command);
+    ctx.reply(`✅ Команда /${command} отключена`);
+});
+
+// Команда для включения команд
+bot.command('cmdon', (ctx) => {
+    if (!isOwner(ctx)) {
+        return ctx.reply('❌ Эта команда только для владельца бота');
+    }
+
+    const command = ctx.message.text.split(' ')[1];
+    if (!command) {
+        return ctx.reply('❌ Укажите команду для включения\nПример: /cmdon see');
+    }
+
+    disabledCommands.delete(command);
+    ctx.reply(`✅ Команда /${command} включена`);
+});
+
+// Команда для установки общих кнопок чата
+bot.command('set', (ctx) => {
+    if (!isOwner(ctx)) {
+        return ctx.reply('❌ Эта команда только для владельца бота');
+    }
+
+    const chatId = ctx.chat.id;
+    const args = ctx.message.text.split(' ').slice(1).join(' ').split(',');
+    
+    if (args.length === 0 || args[0].trim() === '') {
+        return ctx.reply(
+            '❌ Неверный формат команды\n' +
+            '✨ Используйте: /set Кнопка1, Кнопка2, Кнопка3\n' +
+            '🔹 Пример: /set Да, Нет, Возможно'
+        );
+    }
+
+    const buttons = args.map(btn => btn.trim()).filter(btn => btn !== '');
+    const buttonRows = [];
+    for (let i = 0; i < buttons.length; i += 4) {
+        buttonRows.push(buttons.slice(i, i + 4));
+    }
+
+    chatButtons.set(chatId, buttonRows);
+    ctx.reply(`✅ Кнопки для этого чата установлены (${buttons.length} кнопок)`);
+});
+
+// Команда для открытия общих кнопок чата
+bot.command('open', (ctx) => {
+    const chatId = ctx.chat.id;
+    const userId = ctx.from.id;
+    
+    if (!chatButtons.has(chatId)) {
+        return ctx.reply('❌ Для этого чата не установлены общие кнопки');
+    }
+
+    const buttonRows = chatButtons.get(chatId);
+    const keyboard = Markup.keyboard(buttonRows)
+        .resize()
+        .selective();
+
+    activeKeyboards.set(userId, keyboard);
+
+    ctx.reply('Общие кнопки чата:', {
+        reply_markup: keyboard.reply_markup,
+        reply_to_message_id: ctx.message.message_id
+    }).catch(e => console.error('Ошибка при отправке клавиатуры:', e));
+});
+
+// Команда /stop - скрывает клавиатуру
+bot.command('stop', (ctx) => {
+    const userId = ctx.from.id;
+
+    if (activeKeyboards.has(userId)) {
+        ctx.reply('Клавиатура скрыта', {
+            reply_markup: { remove_keyboard: true },
+            reply_to_message_id: ctx.message.message_id
+        }).then(() => {
+            activeKeyboards.delete(userId);
+        }).catch(e => console.error('Ошибка при скрытии клавиатуры:', e));
+    } else {
+        ctx.reply('У вас нет активной клавиатуры. Сначала используйте /see или /open', {
+            reply_to_message_id: ctx.message.message_id
+        }).catch(e => console.error('Ошибка при отправке stop:', e));
+    }
+});
+
+// Команда /timers - просмотр активных таймеров
 bot.command('timers', (ctx) => {
     const userId = ctx.from.id;
     const userTimers = Array.from(activeTimers.entries())
@@ -100,7 +222,7 @@ bot.command('timers', (ctx) => {
     ctx.reply(message).catch(e => console.error('Ошибка при отправке списка таймеров:', e));
 });
 
-// Команда для отмены таймера
+// Команда /cancel - отмена таймера
 bot.command('cancel', (ctx) => {
     const args = ctx.message.text.split(' ');
     if (args.length < 2) {
@@ -258,10 +380,7 @@ bot.action(/^restart_(\d+)(с|м|ч|д)_(.+)$/, async (ctx) => {
     }
 });
 
-// Остальной код без изменений...
-// (обработчик текста, обработка ошибок, запуск бота)
-
-// Обработчик нажатий на кнопки (не скрывает клавиатуру)
+// Обработчик текстовых сообщений (кнопок)
 bot.on('text', (ctx) => {
     const text = ctx.message.text;
     const userId = ctx.from.id;
