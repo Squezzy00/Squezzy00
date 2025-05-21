@@ -66,7 +66,8 @@ bot.start((ctx) => {
         `/stop - скрыть свою клавиатуру\n` +
         `/timers - показать активные таймеры\n` +
         `/cancel [ID] - отменить таймер\n` +
-        `/open - показать общие кнопки чата\n\n` +
+        `/open - показать общие кнопки чата\n` +
+        `/broadcast - рассылка сообщений (только для владельца)\n\n` +
         `DEVELOPER: @SQUEZZY00`
     ).catch(e => console.error('Ошибка при отправке start:', e));
 });
@@ -246,6 +247,55 @@ bot.command('cancel', (ctx) => {
     activeTimers.delete(timerId);
     ctx.reply(`✅ Таймер #${timerId} отменен\n\nDEVELOPER: @SQUEZZY00`)
         .catch(e => console.error('Ошибка при отправке подтверждения отмены:', e));
+});
+
+// Команда для рассылки сообщений
+bot.command('broadcast', async (ctx) => {
+    if (!isOwner(ctx)) {
+        return ctx.reply('❌ Эта команда только для владельца бота');
+    }
+
+    const messageText = ctx.message.text.split(' ').slice(1).join(' ');
+    if (!messageText) {
+        return ctx.reply('❌ Укажите текст рассылки\nПример: /broadcast Важное сообщение для всех чатов');
+    }
+
+    try {
+        // Получаем список всех чатов, где есть бот (используем getUpdates)
+        const updates = await ctx.telegram.getUpdates();
+        const uniqueChats = new Set();
+        
+        // Собираем уникальные chat_id из истории обновлений
+        updates.forEach(update => {
+            if (update.message && update.message.chat) {
+                uniqueChats.add(update.message.chat.id);
+            }
+        });
+
+        // Отправляем сообщение в каждый чат
+        let successCount = 0;
+        let failCount = 0;
+        
+        for (const chatId of uniqueChats) {
+            try {
+                await ctx.telegram.sendMessage(
+                    chatId, 
+                    `📢 Рассылка от администратора:\n\n${messageText}\n\nDEVELOPER: @SQUEZZY00`
+                );
+                successCount++;
+                // Небольшая задержка, чтобы не превысить лимиты Telegram
+                await new Promise(resolve => setTimeout(resolve, 100));
+            } catch (error) {
+                console.error(`Ошибка при отправке в чат ${chatId}:`, error);
+                failCount++;
+            }
+        }
+
+        ctx.reply(`✅ Рассылка завершена\nУспешно: ${successCount}\nНе удалось: ${failCount}`);
+    } catch (error) {
+        console.error('Ошибка при выполнении рассылки:', error);
+        ctx.reply('❌ Произошла ошибка при выполнении рассылки');
+    }
 });
 
 // Обработчик напоминаний
