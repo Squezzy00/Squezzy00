@@ -2,12 +2,22 @@ require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const BOT_OWNER_ID = 5005387093;
+const BOT_OWNER_ID = 5005387093; // Ваш ID
 let timerCounter = 1;
+
+// Хранилища данных
 const activeKeyboards = new Map();
 const activeTimers = new Map();
 const chatButtons = new Map();
 const disabledCommands = new Set();
+const groupChats = new Set(); // Для хранения ID групповых чатов
+
+// Сохраняем ID групповых чатов при получении сообщений
+bot.on('message', (ctx) => {
+    if (ctx.chat.type !== 'private') {
+        groupChats.add(ctx.chat.id);
+    }
+});
 
 // Проверка владельца
 function isOwner(ctx) {
@@ -38,12 +48,12 @@ function getTimeString(amount, unit) {
     return `${amount} ${word}`;
 }
 
-// Проверка команд
+// Проверка отключенных команд
 bot.use((ctx, next) => {
     if (ctx.message?.text?.startsWith('/')) {
         const command = ctx.message.text.split(' ')[0].slice(1).toLowerCase();
         if (disabledCommands.has(command) && !isOwner(ctx)) {
-            return ctx.reply(`❌ Команда /${command} временно отключена`);
+            return ctx.reply(`❌ Команда /${command} временно отключена\n\nDEVELOPER: @SQUEZZY00`);
         }
     }
     return next();
@@ -68,48 +78,39 @@ bot.start((ctx) => {
 
 // Рассылка в группы
 bot.command('broadcast', async (ctx) => {
-    if (!isOwner(ctx)) return ctx.reply('❌ Только для владельца');
+    if (!isOwner(ctx)) return ctx.reply('❌ Только для владельца\n\nDEVELOPER: @SQUEZZY00');
 
     const messageText = ctx.message.text.split(' ').slice(1).join(' ');
-    if (!messageText) return ctx.reply('❌ Укажите текст');
+    if (!messageText) return ctx.reply('❌ Укажите текст\nПример: /broadcast Текст\n\nDEVELOPER: @SQUEZZY00');
 
-    try {
-        const groupChats = new Set();
-        const updates = await ctx.telegram.getUpdates({ limit: 100 });
-        
-        updates.forEach(update => {
-            if (update.message?.chat?.type !== 'private') {
-                groupChats.add(update.message.chat.id);
-            }
-        });
-
-        if (!groupChats.size) {
-            return ctx.reply('❌ Нет активных групп\n\nDEVELOPER: @SQUEZZY00');
-        }
-
-        let success = 0;
-        for (const chatId of groupChats) {
-            try {
-                await ctx.telegram.sendMessage(
-                    chatId,
-                    `📢 Рассылка:\n\n${messageText}\n\nDEVELOPER: @SQUEZZY00`
-                );
-                success++;
-                await new Promise(resolve => setTimeout(resolve, 300));
-            } catch (e) {
-                console.error(`Chat ${chatId} error:`, e);
-            }
-        }
-
-        ctx.reply(
-            `✅ Отправлено в ${success} групп\n` +
-            `Не доставлено: ${groupChats.size - success}\n\n` +
-            `DEVELOPER: @SQUEZZY00`
-        );
-    } catch (e) {
-        console.error('Broadcast error:', e);
-        ctx.reply('❌ Ошибка рассылки\n\nDEVELOPER: @SQUEZZY00');
+    if (groupChats.size === 0) {
+        return ctx.reply('❌ Бот еще не добавлен ни в одну группу\n\nDEVELOPER: @SQUEZZY00');
     }
+
+    let successCount = 0;
+    const failedChats = [];
+
+    for (const chatId of groupChats) {
+        try {
+            await ctx.telegram.sendMessage(
+                chatId,
+                `📢 Рассылка от администратора:\n\n${messageText}\n\nDEVELOPER: @SQUEZZY00`
+            );
+            successCount++;
+            await new Promise(resolve => setTimeout(resolve, 300));
+        } catch (e) {
+            console.error(`Ошибка в чате ${chatId}:`, e);
+            failedChats.push(chatId);
+            groupChats.delete(chatId);
+        }
+    }
+
+    ctx.reply(
+        `✅ Рассылка завершена!\n` +
+        `Успешно: ${successCount} чатов\n` +
+        `Не удалось: ${failedChats.length}\n\n` +
+        `DEVELOPER: @SQUEZZY00`
+    );
 });
 
 // Создание клавиатуры
@@ -190,10 +191,10 @@ bot.hears(/^\/(\d+)(с|м|ч|д)\s+(.+)$/, async (ctx) => {
     }
 });
 
-// Остальные обработчики
+// Управление клавиатурой
 bot.command('stop', (ctx) => {
     if (activeKeyboards.has(ctx.from.id)) {
-        ctx.reply('✅ Клавиатура скрыта', {
+        ctx.reply('✅ Клавиатура скрыта\n\nDEVELOPER: @SQUEZZY00', {
             reply_markup: { remove_keyboard: true }
         });
         activeKeyboards.delete(ctx.from.id);
@@ -202,6 +203,7 @@ bot.command('stop', (ctx) => {
     }
 });
 
+// Повтор таймера
 bot.action(/^restart_/, async (ctx) => {
     await ctx.answerCbQuery('⏳ Таймер установлен');
     ctx.replyWithMarkdown(
@@ -211,13 +213,13 @@ bot.action(/^restart_/, async (ctx) => {
     );
 });
 
-// Запуск бота
+// Запуск бота с вебхуком
 bot.launch({
-    webhook: process.env.WEBHOOK_URL ? {
+    webhook: {
         domain: process.env.WEBHOOK_URL,
         port: process.env.PORT || 3000
-    } : undefined
-}).then(() => console.log('Bot started'));
+    }
+}).then(() => console.log('Бот запущен через вебхук'));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
