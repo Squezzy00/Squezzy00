@@ -261,6 +261,124 @@ bot.command('stop', (ctx) => {
     }
 });
 
+// Команда /report - отправка сообщения владельцу
+bot.command('report', async (ctx) => {
+    const userId = ctx.from.id;
+    
+    // Проверка на бан
+    if (reportBans.has(userId)) {
+        return ctx.reply('❌ Вы заблокированы для отправки репортов');
+    }
+
+    const reportText = ctx.message.text.split(' ').slice(1).join(' ');
+    if (!reportText) {
+        return ctx.reply('❌ Укажите текст сообщения\nПример: /report Нашел баг в команде /timer');
+    }
+
+    try {
+        // Сохраняем репорт для ответа
+        activeReports.set(userId, {
+            chatId: ctx.chat.id,
+            messageId: ctx.message.message_id,
+            text: reportText
+        });
+
+        // Отправляем владельцу
+        await ctx.telegram.sendMessage(
+            BOT_OWNER_ID,
+            `🚨 Новый репорт от ${ctx.from.username || ctx.from.first_name} (ID: ${userId})\n` +
+            `📝 Текст: ${reportText}\n\n` +
+            `Ответить: /reply_${userId} ваш_ответ`,
+            Markup.inlineKeyboard([
+                Markup.button.callback('🔨 Забанить', `ban_${userId}`),
+                Markup.button.callback('✅ Ответить', `replybtn_${userId}`)
+            ])
+        );
+
+        await ctx.reply('✅ Ваше сообщение отправлено владельцу. Спасибо за обратную связь!');
+    } catch (e) {
+        console.error('Ошибка отправки репорта:', e);
+        await ctx.reply('❌ Произошла ошибка при отправке сообщения');
+    }
+});
+
+// Обработка ответов владельца на репорты
+bot.hears(/^\/reply_(\d+)\s+(.+)/, async (ctx) => {
+    if (!isOwner(ctx)) return;
+
+    const userId = parseInt(ctx.match[1]);
+    const replyText = ctx.match[2];
+    const report = activeReports.get(userId);
+
+    if (!report) {
+        return ctx.reply('❌ Репорт не найден или устарел');
+    }
+
+    try {
+        // Отправляем ответ пользователю
+        await ctx.telegram.sendMessage(
+            report.chatId,
+            `📢 Ответ от владельца на ваш репорт:\n` +
+            `"${report.text}"\n\n` +
+            `💬 Ответ: ${replyText}`,
+            { reply_to_message_id: report.messageId }
+        );
+
+        // Удаляем репорт из активных
+        activeReports.delete(userId);
+        await ctx.reply('✅ Ответ успешно отправлен');
+    } catch (e) {
+        console.error('Ошибка отправки ответа:', e);
+        await ctx.reply('❌ Не удалось отправить ответ');
+    }
+});
+
+// Инлайн кнопки для ответа/бана
+bot.action(/^ban_(\d+)$/, async (ctx) => {
+    if (!isOwner(ctx)) {
+        await ctx.answerCbQuery('Только для владельца');
+        return;
+    }
+
+    const userId = parseInt(ctx.match[1]);
+    reportBans.add(userId);
+    saveData();
+
+    await ctx.answerCbQuery('Пользователь забанен');
+    await ctx.editMessageText(
+        ctx.callbackQuery.message.text + '\n\n🔨 Пользователь забанен для репортов',
+        { reply_markup: Markup.inlineKeyboard([]) }
+    );
+});
+
+bot.action(/^replybtn_(\d+)$/, async (ctx) => {
+    if (!isOwner(ctx)) {
+        await ctx.answerCbQuery('Только для владельца');
+        return;
+    }
+
+    const userId = ctx.match[1];
+    await ctx.answerCbQuery(`Используйте команду /reply_${userId} ваш_ответ`);
+});
+
+// Команда для разбана пользователя
+bot.command('unban_report', async (ctx) => {
+    if (!isOwner(ctx)) return;
+
+    const userId = parseInt(ctx.message.text.split(' ')[1]);
+    if (isNaN(userId)) {
+        return ctx.reply('❌ Укажите ID пользователя\nПример: /unban_report 123456789');
+    }
+
+    if (reportBans.has(userId)) {
+        reportBans.delete(userId);
+        saveData();
+        await ctx.reply(`✅ Пользователь ${userId} разбанен`);
+    } else {
+        await ctx.reply('ℹ️ Этот пользователь не забанен');
+    }
+});
+
 // Команда /timers - просмотр активных таймеров
 bot.command('timers', (ctx) => {
     const userId = ctx.from.id;
