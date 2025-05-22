@@ -631,10 +631,10 @@ bot.launch({
 .catch(e => console.error('Ошибка при запуске бота:', e));
 
 process.once('SIGINT', () => {
-    saveChats();
+    saveData();
     bot.stop('SIGINT');
 });
 process.once('SIGTERM', () => {
-    saveChats();
+    saveData();
     bot.stop('SIGTERM');
 });
