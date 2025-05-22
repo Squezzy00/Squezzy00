@@ -10,27 +10,42 @@ const activeKeyboards = new Map();
 const activeTimers = new Map();
 const chatButtons = new Map();
 const disabledCommands = new Set();
+const reportBans = new Set(); // Для хранения забаненных пользователей
+const activeReports = new Map(); // Для хранения активных репортов (userId -> message)
 
 // Файл для хранения chat_id
 const CHATS_FILE = path.join(__dirname, 'chats.json');
+// Файл для хранения банов репортов
+const BANS_FILE = path.join(__dirname, 'report_bans.json');
 
-// Загрузка сохраненных чатов
+// Загрузка сохраненных данных
 let knownChats = new Set();
+let savedReportBans = new Set();
+
 try {
+    // Загрузка чатов
     if (fs.existsSync(CHATS_FILE)) {
         const data = fs.readFileSync(CHATS_FILE, 'utf-8');
         knownChats = new Set(JSON.parse(data));
     }
+    
+    // Загрузка банов
+    if (fs.existsSync(BANS_FILE)) {
+        const data = fs.readFileSync(BANS_FILE, 'utf-8');
+        savedReportBans = new Set(JSON.parse(data));
+        reportBans = new Set(savedReportBans);
+    }
 } catch (e) {
-    console.error('Ошибка загрузки chats.json:', e);
+    console.error('Ошибка загрузки файлов:', e);
 }
 
-// Сохранение чатов
-function saveChats() {
+// Сохранение данных
+function saveData() {
     try {
         fs.writeFileSync(CHATS_FILE, JSON.stringify([...knownChats]), 'utf-8');
+        fs.writeFileSync(BANS_FILE, JSON.stringify([...reportBans]), 'utf-8');
     } catch (e) {
-        console.error('Ошибка сохранения chats.json:', e);
+        console.error('Ошибка сохранения данных:', e);
     }
 }
 
@@ -39,7 +54,7 @@ bot.use((ctx, next) => {
     if (ctx.chat) {
         if (!knownChats.has(ctx.chat.id)) {
             knownChats.add(ctx.chat.id);
-            saveChats();
+            saveData();
         }
     }
     return next();
