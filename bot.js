@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const BOT_OWNER_ID = 5005387093; // Ваш ID аккаунта
+const BOT_OWNER_ID = 5005387093;
 let timerCounter = 1;
 const activeKeyboards = new Map();
 const activeTimers = new Map();
@@ -14,12 +14,11 @@ const reportBans = new Set();
 const activeReports = new Map();
 const ticTacToeGames = new Map();
 
-// Файл для хранения chat_id
+// Файлы для хранения данных
 const CHATS_FILE = path.join(__dirname, 'chats.json');
-// Файл для хранения банов репортов
 const BANS_FILE = path.join(__dirname, 'report_bans.json');
 
-// Загрузка сохраненных данных
+// Загрузка данных
 let knownChats = new Set();
 let savedReportBans = new Set();
 
@@ -48,6 +47,7 @@ function saveData() {
     }
 }
 
+// Middleware для сохранения chat_id
 bot.use((ctx, next) => {
     if (ctx.chat) {
         if (!knownChats.has(ctx.chat.id)) {
@@ -58,6 +58,7 @@ bot.use((ctx, next) => {
     return next();
 });
 
+// Проверка прав
 function isOwner(ctx) {
     return ctx.from.id === BOT_OWNER_ID;
 }
@@ -73,21 +74,10 @@ async function isAdmin(ctx) {
     }
 }
 
-// Классы для игры в крестики-нолики
-class Player {
-    constructor(symbol) {
-        this.symbol = symbol;
-    }
-
-    get other() {
-        return this.symbol === 'x' ? new Player('o') : new Player('x');
-    }
-}
-
+// Класс игрового поля
 class Board {
     constructor() {
         this.grid = Array(3).fill().map(() => Array(3).fill(null));
-        this.moves = [];
     }
 
     hasWinner() {
@@ -126,109 +116,19 @@ class Board {
     }
 
     isFull() {
-        return this.moves.length === 9;
+        return this.grid.flat().every(cell => cell !== null);
     }
 
-    makeMove(row, col, player) {
+    makeMove(row, col, symbol) {
         if (this.grid[row][col] === null) {
-            this.grid[row][col] = player.symbol;
-            this.moves.push([row, col]);
+            this.grid[row][col] = symbol;
             return true;
         }
         return false;
     }
-
-    getLegalMoves() {
-        const moves = [];
-        for (let row = 0; row < 3; row++) {
-            for (let col = 0; col < 3; col++) {
-                if (this.grid[row][col] === null) {
-                    moves.push([row, col]);
-                }
-            }
-        }
-        return moves;
-    }
 }
 
-class AIPlayer {
-    constructor(player) {
-        this.player = player;
-    }
-
-    minimax(board, depth, isMaximizing, alpha = -Infinity, beta = Infinity) {
-        const winner = board.hasWinner();
-        if (winner === this.player.symbol) {
-            return { score: 10 - depth };
-        } else if (winner === this.player.other.symbol) {
-            return { score: depth - 10 };
-        } else if (board.isFull()) {
-            return { score: 0 };
-        }
-
-        const moves = board.getLegalMoves();
-        let bestMove = null;
-        let bestScore = isMaximizing ? -Infinity : Infinity;
-
-        for (const [row, col] of moves) {
-            const newBoard = JSON.parse(JSON.stringify(board));
-            newBoard.grid = JSON.parse(JSON.stringify(board.grid));
-            newBoard.moves = [...board.moves];
-            
-            newBoard.makeMove(
-                row, 
-                col, 
-                isMaximizing ? this.player : this.player.other
-            );
-
-            const result = this.minimax(
-                newBoard, 
-                depth + 1, 
-                !isMaximizing, 
-                alpha, 
-                beta
-            );
-
-            if (isMaximizing) {
-                if (result.score > bestScore) {
-                    bestScore = result.score;
-                    bestMove = [row, col];
-                }
-                alpha = Math.max(alpha, bestScore);
-            } else {
-                if (result.score < bestScore) {
-                    bestScore = result.score;
-                    bestMove = [row, col];
-                }
-                beta = Math.min(beta, bestScore);
-            }
-
-            if (alpha >= beta) {
-                break;
-            }
-        }
-
-        return { move: bestMove, score: bestScore };
-    }
-
-    getBestMove(board) {
-        const result = this.minimax(board, 0, true);
-        return result.move;
-    }
-}
-
-// Фразы для игры
-const gamePhrases = [
-    "Твой мозг - просто шутка... Используй его!",
-    "Какой отличный ход...",
-    "Попробуй победить меня!",
-    "Я неотразим, у тебя нет шансов!",
-    "Время тикает... Поторопись.",
-    "Не действуй, остановись и подумай!",
-    "Это был твой выбор, не мой...",
-];
-
-// Функции для работы с игрой
+// Функции для игры
 function renderBoard(board) {
     let text = '';
     for (let row = 0; row < 3; row++) {
@@ -242,7 +142,7 @@ function renderBoard(board) {
     return text;
 }
 
-function createGameKeyboard(gameId, board, isPlayerTurn) {
+function createGameKeyboard(gameId, board, isCurrentPlayer) {
     const buttons = [];
     for (let row = 0; row < 3; row++) {
         const rowButtons = [];
@@ -252,7 +152,7 @@ function createGameKeyboard(gameId, board, isPlayerTurn) {
                 Markup.button.callback(
                     cell === 'x' ? '❌' : cell === 'o' ? '⭕️' : '⬜️',
                     `ttt_${gameId}_${row}_${col}`,
-                    !isPlayerTurn || cell !== null
+                    cell !== null || !isCurrentPlayer
                 )
             );
         }
@@ -261,24 +161,26 @@ function createGameKeyboard(gameId, board, isPlayerTurn) {
     return Markup.inlineKeyboard(buttons);
 }
 
-// Обработчики команд для игры
+// Команды игры
 bot.command('tictactoe', (ctx) => {
     const gameId = Date.now().toString();
+    const firstPlayer = Math.random() > 0.5 ? 'x' : 'o';
+    
     ticTacToeGames.set(gameId, {
         player1: ctx.from.id,
         player2: null,
-        currentPlayer: 'x',
+        player1Symbol: firstPlayer,
+        player2Symbol: firstPlayer === 'x' ? 'o' : 'x',
+        currentPlayer: ctx.from.id,
         board: new Board(),
         waitingForPlayer: true
     });
 
     ctx.reply(
-        '🧠 Хотите сыграть в крестики-нолики? Ожидание второго игрока...\n\n' +
-        'Отправьте эту команду другому игроку: /jointtt ' + gameId,
-        Markup.inlineKeyboard([
-            Markup.button.callback('❌ Я буду крестиками', `ttt_join_${gameId}_x`),
-            Markup.button.callback('⭕️ Я буду ноликами', `ttt_join_${gameId}_o`)
-        ])
+        '🧠 Игра в крестики-нолики!\n\n' +
+        `Вы играете ${firstPlayer === 'x' ? '❌ крестиками' : '⭕️ ноликами'}\n` +
+        'Отправьте другому игроку команду:\n' +
+        `/jointtt ${gameId}`
     );
 });
 
@@ -300,205 +202,103 @@ bot.command('jointtt', (ctx) => {
     const player2Name = ctx.message.from.username || ctx.message.from.first_name;
 
     ctx.reply(
-        `Игра началась!\n\n${player1Name} (❌) vs ${player2Name} (⭕️)\n` +
-        `Сейчас ходит: ${game.currentPlayer === 'x' ? player1Name : player2Name}`,
-        createGameKeyboard(gameId, game.board, true)
+        `Игра началась!\n\n` +
+        `${player1Name} (${game.player1Symbol === 'x' ? '❌' : '⭕️'}) vs ` +
+        `${player2Name} (${game.player2Symbol === 'x' ? '❌' : '⭕️'})\n` +
+        `Сейчас ходит: ${game.currentPlayer === game.player1 ? player1Name : player2Name}`,
+        createGameKeyboard(
+            gameId, 
+            game.board, 
+            ctx.from.id === game.currentPlayer
+        )
     );
 });
 
-bot.command('tictactoeai', (ctx) => {
-    const gameId = Date.now().toString();
-    const humanPlayer = Math.random() > 0.5 ? 'x' : 'o';
-    const aiPlayer = humanPlayer === 'x' ? 'o' : 'x';
-
-    const board = new Board();
-    const ai = new AIPlayer(new Player(aiPlayer));
-
-    ticTacToeGames.set(gameId, {
-        player1: ctx.from.id,
-        player2: 'ai',
-        currentPlayer: humanPlayer,
-        board,
-        ai,
-        humanPlayer,
-        aiPlayer
-    });
-
-    // Если AI ходит первым
-    if (humanPlayer !== 'x') {
-        const [row, col] = ai.getBestMove(board);
-        board.makeMove(row, col, new Player(aiPlayer));
-    }
-
-    ctx.reply(
-        `🧠 Игра против AI началась!\nВы играете ${humanPlayer === 'x' ? '❌' : '⭕️'}\n` +
-        `Сейчас ходит: ${humanPlayer === 'x' ? 'Вы' : 'AI'}`,
-        createGameKeyboard(gameId, board, humanPlayer === 'x')
-    );
-});
-
-// Обработчик нажатий на кнопки
-bot.action(/^ttt_(join|move)_(.+)_(\d)_(\d)$/, async (ctx) => {
-    const [_, action, gameId, row, col] = ctx.match;
+// Обработчик ходов
+bot.action(/^ttt_(.+)_(\d)_(\d)$/, async (ctx) => {
+    const [_, gameId, row, col] = ctx.match;
+    const game = ticTacToeGames.get(gameId);
     
-    if (action === 'join') {
-        const symbol = ctx.match[3];
-        const game = ticTacToeGames.get(gameId);
-        
-        if (!game || !game.waitingForPlayer) {
-            return ctx.answerCbQuery('Игра уже началась');
-        }
-        
-        if (game.player2) {
-            return ctx.answerCbQuery('В игре уже есть второй игрок');
-        }
-        
-        game.player2 = ctx.from.id;
-        game.currentPlayer = 'x';
-        game.waitingForPlayer = false;
-        
-        await ctx.editMessageText(
-            'Игра началась! Сейчас ходит первый игрок (❌)',
-            createGameKeyboard(gameId, game.board, game.currentPlayer === 'x')
-        );
-    } else {
-        const game = ticTacToeGames.get(gameId);
-        
-        if (!game) {
-            return ctx.answerCbQuery('Игра не найдена');
-        }
-        
-        const currentPlayerId = game.currentPlayer === 'x' ? game.player1 : game.player2;
-        if (ctx.from.id !== currentPlayerId && ctx.from.id !== BOT_OWNER_ID) {
-            return ctx.answerCbQuery('Сейчас не ваш ход');
-        }
-        
-        const playerSymbol = game.currentPlayer;
-        if (!game.board.makeMove(parseInt(row), parseInt(col), new Player(playerSymbol))) {
-            return ctx.answerCbQuery('Эта клетка уже занята');
-        }
-        
-        // Проверка на победу
-        const winner = game.board.hasWinner();
-        if (winner) {
-            const winnerName = winner === 'x' ? 
-                (game.player2 === 'ai' ? 'Вы' : 'Игрок 1') : 
-                (game.player2 === 'ai' ? 'AI' : 'Игрок 2');
-                
-            await ctx.editMessageText(
-                `🏆 Победитель: ${winnerName} (${winner === 'x' ? '❌' : '⭕️'})\n\n` +
-                renderBoard(game.board),
-                Markup.inlineKeyboard([])
-            );
-            ticTacToeGames.delete(gameId);
-            return;
-        }
-        
-        // Проверка на ничью
-        if (game.board.isFull()) {
-            await ctx.editMessageText(
-                '🐉 Игра закончилась ничьей!\n\n' + renderBoard(game.board),
-                Markup.inlineKeyboard([])
-            );
-            ticTacToeGames.delete(gameId);
-            return;
-        }
-        
-        // Ход AI если это игра против компьютера
-        if (game.player2 === 'ai' && game.currentPlayer === game.aiPlayer) {
-            const [aiRow, aiCol] = game.ai.getBestMove(game.board);
-            game.board.makeMove(aiRow, aiCol, new Player(game.aiPlayer));
-            
-            // Проверка на победу после хода AI
-            const aiWinner = game.board.hasWinner();
-            if (aiWinner) {
-                await ctx.editMessageText(
-                    `🏆 Победитель: AI (${aiWinner === 'x' ? '❌' : '⭕️'})\n\n` +
-                    renderBoard(game.board),
-                    Markup.inlineKeyboard([])
-                );
-                ticTacToeGames.delete(gameId);
-                return;
-            }
-            
-            // Проверка на ничью после хода AI
-            if (game.board.isFull()) {
-                await ctx.editMessageText(
-                    '🐉 Игра закончилась ничьей!\n\n' + renderBoard(game.board),
-                    Markup.inlineKeyboard([])
-                );
-                ticTacToeGames.delete(gameId);
-                return;
-            }
-        }
-        
-        // Переход хода
-        game.currentPlayer = game.currentPlayer === 'x' ? 'o' : 'x';
-        
-        const isPlayerTurn = game.player2 === 'ai' ? 
-            game.currentPlayer === game.humanPlayer : 
-            true;
+    if (!game) {
+        return ctx.answerCbQuery('Игра не найдена');
+    }
+    
+    if (game.waitingForPlayer) {
+        return ctx.answerCbQuery('Ожидание второго игрока');
+    }
+    
+    if (ctx.from.id !== game.currentPlayer) {
+        return ctx.answerCbQuery('Сейчас не ваш ход');
+    }
+    
+    const currentSymbol = game.currentPlayer === game.player1 ? 
+        game.player1Symbol : 
+        game.player2Symbol;
+    
+    if (!game.board.makeMove(parseInt(row), parseInt(col), currentSymbol)) {
+        return ctx.answerCbQuery('Эта клетка уже занята');
+    }
+    
+    // Проверка победы
+    const winner = game.board.hasWinner();
+    if (winner) {
+        const winnerName = winner === game.player1Symbol ? 
+            (game.player1 === ctx.from.id ? 'Вы' : 'Игрок 1') : 
+            (game.player2 === ctx.from.id ? 'Вы' : 'Игрок 2');
             
         await ctx.editMessageText(
-            `🧠 ${gamePhrases[Math.floor(Math.random() * gamePhrases.length)]}\n\n` +
-            `Сейчас ходит: ${game.currentPlayer === 'x' ? 
-                (game.player2 === 'ai' ? 'Вы' : 'Игрок 1') : 
-                (game.player2 === 'ai' ? 'AI' : 'Игрок 2')} ` +
-            `(${game.currentPlayer === 'x' ? '❌' : '⭕️'})\n\n` +
+            `🏆 Победитель: ${winnerName} (${winner === 'x' ? '❌' : '⭕️'})\n\n` +
             renderBoard(game.board),
-            createGameKeyboard(gameId, game.board, isPlayerTurn)
+            { reply_markup: { inline_keyboard: [] } }
         );
+        ticTacToeGames.delete(gameId);
+        return;
     }
+    
+    // Проверка ничьи
+    if (game.board.isFull()) {
+        await ctx.editMessageText(
+            '🐉 Игра закончилась ничьей!\n\n' + renderBoard(game.board),
+            { reply_markup: { inline_keyboard: [] } }
+        );
+        ticTacToeGames.delete(gameId);
+        return;
+    }
+    
+    // Переход хода
+    game.currentPlayer = game.currentPlayer === game.player1 ? 
+        game.player2 : 
+        game.player1;
+    
+    const currentPlayerName = game.currentPlayer === game.player1 ? 
+        (game.player1 === ctx.from.id ? 'Вы' : 'Игрок 1') : 
+        (game.player2 === ctx.from.id ? 'Вы' : 'Игрок 2');
+    
+    await ctx.editMessageText(
+        `Сейчас ходит: ${currentPlayerName} ` +
+        `(${game.currentPlayer === game.player1 ? game.player1Symbol : game.player2Symbol === 'x' ? '❌' : '⭕️'})\n\n` +
+        renderBoard(game.board),
+        createGameKeyboard(
+            gameId, 
+            game.board, 
+            ctx.from.id === game.currentPlayer
+        )
+    );
 });
 
-function getTimeString(amount, unit) {
-    const units = {
-        'с': ['секунду', 'секунды', 'секунд'],
-        'м': ['минуту', 'минуты', 'минут'],
-        'ч': ['час', 'часа', 'часов'],
-        'д': ['день', 'дня', 'дней']
-    };
-
-    let word;
-    if (amount % 10 === 1 && amount % 100 !== 11) {
-        word = units[unit][0];
-    } else if ([2, 3, 4].includes(amount % 10) && ![12, 13, 14].includes(amount % 100)) {
-        word = units[unit][1];
-    } else {
-        word = units[unit][2];
-    }
-
-    return `${amount} ${word}`;
-}
-
-// Middleware для проверки отключенных команд
-bot.use((ctx, next) => {
-    if (ctx.message && ctx.message.text && ctx.message.text.startsWith('/')) {
-        const command = ctx.message.text.split(' ')[0].slice(1).toLowerCase();
-        if (disabledCommands.has(command) && !isOwner(ctx)) {
-            return ctx.reply(`❌ Команда /${command} временно отключена`);
-        }
-    }
-    return next();
-});
-
-// Стартовое сообщение
+// Стартовая команда
 bot.start((ctx) => {
     const username = ctx.message.from.username ? `@${ctx.message.from.username}` : ctx.message.from.first_name;
     ctx.reply(
-        `🕰️ Привет, ${username}, Я бот-напоминалка!\n\n` +
-        `✨ Как пользоваться:\n` +
+        `🕰️ Привет, ${username}, Я бот-напоминалка с игрой в крестики-нолики!\n\n` +
+        `✨ Основные команды:\n` +
+        `/tictactoe - начать игру в крестики-нолики\n` +
+        `/jointtt [ID] - присоединиться к игре\n\n` +
+        `⏱ Команды напоминаний:\n` +
         `/1с Напомни мне - через 1 секунду\n` +
         `/5м Позвонить другу - через 5 минут\n` +
         `/2ч Принять лекарство - через 2 часа\n` +
         `/3д Оплатить счёт - через 3 дня\n\n` +
-        `📝 Пример: /10м Проверить почту\n\n` +
-        `🆕 Новые команды:\n` +
-        `/see Кнопка1, Кнопка2 - показать клавиатуру\n` +
-        `/stop - скрыть свою клавиатуру\n` +
-        `/timers - показать активные таймеры\n` +
-        `/cancel [ID] - отменить таймер\n` +
-        `/open - показать общие кнопки чата\n\n` +
         `DEVELOPER: @SQUEZZY00`
     ).catch(e => console.error('Ошибка при отправке start:', e));
 });
