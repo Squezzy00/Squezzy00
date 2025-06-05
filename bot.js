@@ -158,10 +158,10 @@ function createGameKeyboard(gameId, board, isCurrentPlayer) {
         }
         buttons.push(rowButtons);
     }
-    return Markup.inlineKeyboard(buttons);
+    return buttons;
 }
 
-// Команды игры
+// Команда начала игры
 bot.command('tictactoe', (ctx) => {
     const gameId = Date.now().toString();
     const firstPlayer = Math.random() > 0.5 ? 'x' : 'o';
@@ -176,14 +176,56 @@ bot.command('tictactoe', (ctx) => {
         waitingForPlayer: true
     });
 
+    const keyboard = Markup.inlineKeyboard([
+        [
+            Markup.button.url(
+                'Присоединиться к игре', 
+                `https://t.me/${ctx.botInfo.username}?start=join_${gameId}`
+            )
+        ],
+        [
+            Markup.button.callback('❌ Я крестики', `ttt_join_${gameId}_x`),
+            Markup.button.callback('⭕️ Я нолики', `ttt_join_${gameId}_o`)
+        ]
+    ]);
+
     ctx.reply(
         '🧠 Игра в крестики-нолики!\n\n' +
-        `Вы играете ${firstPlayer === 'x' ? '❌ крестиками' : '⭕️ ноликами'}\n` +
+        `ID игры: <code>${gameId}</code>\n` +
+        `Вы играете ${firstPlayer === 'x' ? '❌ крестиками' : '⭕️ ноликами'}\n\n` +
         'Отправьте другому игроку команду:\n' +
-        `/jointtt ${gameId}`
+        `/jointtt ${gameId}\n\n` +
+        'Или нажмите кнопку ниже для быстрого присоединения:',
+        {
+            ...keyboard,
+            parse_mode: 'HTML'
+        }
     );
 });
 
+// Оригинальный /start без изменений
+bot.start((ctx) => {
+    const username = ctx.message.from.username ? `@${ctx.message.from.username}` : ctx.message.from.first_name;
+    ctx.reply(
+        `🕰️ Привет, ${username}, Я бот-напоминалка!\n\n` +
+        `✨ Как пользоваться:\n` +
+        `/1с Напомни мне - через 1 секунду\n` +
+        `/5м Позвонить другу - через 5 минут\n` +
+        `/2ч Принять лекарство - через 2 часа\n` +
+        `/3д Оплатить счёт - через 3 дня\n\n` +
+        `📝 Пример: /10м Проверить почту\n\n` +
+        `🆕 Новые команды:\n` +
+        `/see Кнопка1, Кнопка2 - показать клавиатуру\n` +
+        `/stop - скрыть свою клавиатуру\n` +
+        `/timers - показать активные таймеры\n` +
+        `/cancel [ID] - отменить таймер\n` +
+        `/open - показать общие кнопки чата\n` +
+        `/tictactoe - играть в крестики-нолики\n\n` +
+        `DEVELOPER: @SQUEZZY00`
+    ).catch(e => console.error('Ошибка при отправке start:', e));
+});
+
+// Команда присоединения к игре
 bot.command('jointtt', (ctx) => {
     const gameId = ctx.message.text.split(' ')[1];
     if (!ticTacToeGames.has(gameId)) {
@@ -198,19 +240,27 @@ bot.command('jointtt', (ctx) => {
     game.player2 = ctx.from.id;
     game.waitingForPlayer = false;
     
-    const player1Name = ctx.from.username || ctx.from.first_name;
-    const player2Name = ctx.message.from.username || ctx.message.from.first_name;
+    const player1Name = game.player1 === ctx.from.id ? 
+        'Вы' : 
+        (ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name);
+    const player2Name = game.player2 === ctx.from.id ? 
+        'Вы' : 
+        (ctx.message.from.username ? `@${ctx.message.from.username}` : ctx.message.from.first_name);
+
+    const keyboard = Markup.inlineKeyboard(
+        createGameKeyboard(gameId, game.board, ctx.from.id === game.currentPlayer)
+    );
 
     ctx.reply(
-        `Игра началась!\n\n` +
+        `🎮 Игра началась!\n\n` +
         `${player1Name} (${game.player1Symbol === 'x' ? '❌' : '⭕️'}) vs ` +
-        `${player2Name} (${game.player2Symbol === 'x' ? '❌' : '⭕️'})\n` +
-        `Сейчас ходит: ${game.currentPlayer === game.player1 ? player1Name : player2Name}`,
-        createGameKeyboard(
-            gameId, 
-            game.board, 
-            ctx.from.id === game.currentPlayer
-        )
+        `${player2Name} (${game.player2Symbol === 'x' ? '❌' : '⭕️'})\n\n` +
+        `Сейчас ходит: ${game.currentPlayer === game.player1 ? player1Name : player2Name}\n\n` +
+        renderBoard(game.board),
+        {
+            ...keyboard,
+            parse_mode: 'HTML'
+        }
     );
 });
 
@@ -273,34 +323,17 @@ bot.action(/^ttt_(.+)_(\d)_(\d)$/, async (ctx) => {
     const currentPlayerName = game.currentPlayer === game.player1 ? 
         (game.player1 === ctx.from.id ? 'Вы' : 'Игрок 1') : 
         (game.player2 === ctx.from.id ? 'Вы' : 'Игрок 2');
-    
+
+    const keyboard = Markup.inlineKeyboard(
+        createGameKeyboard(gameId, game.board, ctx.from.id === game.currentPlayer)
+    );
+
     await ctx.editMessageText(
-        `Сейчас ходит: ${currentPlayerName} ` +
+        `🎮 Сейчас ходит: ${currentPlayerName} ` +
         `(${game.currentPlayer === game.player1 ? game.player1Symbol : game.player2Symbol === 'x' ? '❌' : '⭕️'})\n\n` +
         renderBoard(game.board),
-        createGameKeyboard(
-            gameId, 
-            game.board, 
-            ctx.from.id === game.currentPlayer
-        )
+        keyboard
     );
-});
-
-// Стартовая команда
-bot.start((ctx) => {
-    const username = ctx.message.from.username ? `@${ctx.message.from.username}` : ctx.message.from.first_name;
-    ctx.reply(
-        `🕰️ Привет, ${username}, Я бот-напоминалка с игрой в крестики-нолики!\n\n` +
-        `✨ Основные команды:\n` +
-        `/tictactoe - начать игру в крестики-нолики\n` +
-        `/jointtt [ID] - присоединиться к игре\n\n` +
-        `⏱ Команды напоминаний:\n` +
-        `/1с Напомни мне - через 1 секунду\n` +
-        `/5м Позвонить другу - через 5 минут\n` +
-        `/2ч Принять лекарство - через 2 часа\n` +
-        `/3д Оплатить счёт - через 3 дня\n\n` +
-        `DEVELOPER: @SQUEZZY00`
-    ).catch(e => console.error('Ошибка при отправке start:', e));
 });
 
 // Команда /see - создает постоянную клавиатуру
