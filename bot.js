@@ -81,19 +81,53 @@ class Board {
     }
 
     hasWinner() {
-        // ... (логика проверки победителя)
+        // Проверка строк
+        for (let row = 0; row < 3; row++) {
+            if (this.grid[row][0] && 
+                this.grid[row][0] === this.grid[row][1] && 
+                this.grid[row][0] === this.grid[row][2]) {
+                return this.grid[row][0];
+            }
+        }
+
+        // Проверка столбцов
+        for (let col = 0; col < 3; col++) {
+            if (this.grid[0][col] && 
+                this.grid[0][col] === this.grid[1][col] && 
+                this.grid[0][col] === this.grid[2][col]) {
+                return this.grid[0][col];
+            }
+        }
+
+        // Проверка диагоналей
+        if (this.grid[0][0] && 
+            this.grid[0][0] === this.grid[1][1] && 
+            this.grid[0][0] === this.grid[2][2]) {
+            return this.grid[0][0];
+        }
+
+        if (this.grid[0][2] && 
+            this.grid[0][2] === this.grid[1][1] && 
+            this.grid[0][2] === this.grid[2][0]) {
+            return this.grid[0][2];
+        }
+
+        return null;
     }
 
     isFull() {
-        // ... (логика проверки ничьи)
+        return this.grid.flat().every(cell => cell !== null);
     }
 
     makeMove(row, col, symbol) {
-        // ... (логика хода)
+        if (this.grid[row][col] === null) {
+            this.grid[row][col] = symbol;
+            return true;
+        }
+        return false;
     }
 }
 
-// Функции для игры
 function renderBoard(board) {
     let text = '';
     for (let row = 0; row < 3; row++) {
@@ -107,7 +141,7 @@ function renderBoard(board) {
     return text;
 }
 
-function createGameKeyboard(gameId, board, isCurrentPlayer) {
+function createGameKeyboard(gameId, board, currentPlayerId, userId) {
     const buttons = [];
     for (let row = 0; row < 3; row++) {
         const rowButtons = [];
@@ -116,47 +150,42 @@ function createGameKeyboard(gameId, board, isCurrentPlayer) {
             rowButtons.push(
                 Markup.button.callback(
                     cell === 'x' ? '❌' : cell === 'o' ? '⭕️' : '⬜️',
-                    `ttt_move_${gameId}_${row}_${col}`
+                    `ttt_move_${gameId}_${row}_${col}`,
+                    cell !== null || userId !== currentPlayerId
                 )
             );
         }
         buttons.push(rowButtons);
     }
-    
-    // Добавляем кнопку "Присоединиться" только если игра ожидает второго игрока
-    if (!isCurrentPlayer) {
-        buttons.push([
-            Markup.button.callback('Присоединиться к игре', `ttt_join_${gameId}`)
-        ]);
-    }
-    
     return buttons;
 }
 
-// Команда начала игры
 bot.command('tictactoe', (ctx) => {
     const gameId = Date.now().toString();
     const firstPlayer = Math.random() > 0.5 ? 'x' : 'o';
     
     ticTacToeGames.set(gameId, {
-        player1: ctx.from.id,
+        player1: {
+            id: ctx.from.id,
+            name: ctx.from.username || ctx.from.first_name,
+            symbol: firstPlayer
+        },
         player2: null,
-        player1Symbol: firstPlayer,
-        player2Symbol: firstPlayer === 'x' ? 'o' : 'x',
         currentPlayer: ctx.from.id,
         board: new Board(),
         waitingForPlayer: true
     });
 
-    const keyboard = Markup.inlineKeyboard(
-        createGameKeyboard(gameId, new Board(), false)
-    );
+    const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('Присоединиться к игре', `ttt_join_${gameId}`)]
+    ]);
 
     ctx.reply(
-        '🧠 Игра в крестики-нолики!\n\n' +
+        `🧠 Игра в крестики-нолики!\n\n` +
+        `Создатель: ${ctx.from.username || ctx.from.first_name}\n` +
+        `Играет за: ${firstPlayer === 'x' ? '❌ крестики' : '⭕️ нолики'}\n\n` +
         `ID игры: <code>${gameId}</code>\n` +
-        `Вы играете ${firstPlayer === 'x' ? '❌ крестиками' : '⭕️ ноликами'}\n\n` +
-        'Другой игрок может присоединиться, нажав кнопку ниже:',
+        `Ожидание второго игрока...`,
         {
             ...keyboard,
             parse_mode: 'HTML'
@@ -164,7 +193,6 @@ bot.command('tictactoe', (ctx) => {
     );
 });
 
-// Обработчик кнопки присоединения
 bot.action(/^ttt_join_(.+)$/, async (ctx) => {
     const gameId = ctx.match[1];
     const game = ticTacToeGames.get(gameId);
@@ -173,7 +201,7 @@ bot.action(/^ttt_join_(.+)$/, async (ctx) => {
         return ctx.answerCbQuery('Игра не найдена');
     }
     
-    if (game.player1 === ctx.from.id) {
+    if (ctx.from.id === game.player1.id) {
         return ctx.answerCbQuery('Вы не можете присоединиться к своей игре');
     }
     
@@ -181,21 +209,26 @@ bot.action(/^ttt_join_(.+)$/, async (ctx) => {
         return ctx.answerCbQuery('В игре уже есть второй игрок');
     }
     
-    game.player2 = ctx.from.id;
+    const secondPlayerSymbol = game.player1.symbol === 'x' ? 'o' : 'x';
+    game.player2 = {
+        id: ctx.from.id,
+        name: ctx.from.username || ctx.from.first_name,
+        symbol: secondPlayerSymbol
+    };
     game.waitingForPlayer = false;
     
-    const player1Name = ctx.from.username || ctx.from.first_name;
-    const player2Name = ctx.callbackQuery.from.username || ctx.callbackQuery.from.first_name;
+    // Первый ход делает игрок, который создал игру
+    game.currentPlayer = game.player1.id;
 
     const keyboard = Markup.inlineKeyboard(
-        createGameKeyboard(gameId, game.board, ctx.from.id === game.currentPlayer)
+        createGameKeyboard(gameId, game.board, game.currentPlayer, ctx.from.id)
     );
 
     await ctx.editMessageText(
         `🎮 Игра началась!\n\n` +
-        `${player1Name} (${game.player1Symbol === 'x' ? '❌' : '⭕️'}) vs ` +
-        `${player2Name} (${game.player2Symbol === 'x' ? '❌' : '⭕️'})\n\n` +
-        `Сейчас ходит: ${game.currentPlayer === game.player1 ? player1Name : player2Name}\n\n` +
+        `${game.player1.name} (${game.player1.symbol === 'x' ? '❌' : '⭕️'}) vs ` +
+        `${game.player2.name} (${game.player2.symbol === 'x' ? '❌' : '⭕️'})\n\n` +
+        `Сейчас ходит: ${game.player1.name}\n\n` +
         renderBoard(game.board),
         keyboard
     );
@@ -203,7 +236,6 @@ bot.action(/^ttt_join_(.+)$/, async (ctx) => {
     return ctx.answerCbQuery('Вы успешно присоединились к игре');
 });
 
-// Обработчик ходов
 bot.action(/^ttt_move_(.+)_(\d)_(\d)$/, async (ctx) => {
     const [_, gameId, row, col] = ctx.match;
     const game = ticTacToeGames.get(gameId);
@@ -216,27 +248,23 @@ bot.action(/^ttt_move_(.+)_(\d)_(\d)$/, async (ctx) => {
         return ctx.answerCbQuery('Ожидание второго игрока');
     }
     
-    if (ctx.from.id !== game.currentPlayer) {
+    const currentPlayer = game.currentPlayer === game.player1.id ? game.player1 : game.player2;
+    
+    if (ctx.from.id !== currentPlayer.id) {
         return ctx.answerCbQuery('Сейчас не ваш ход');
     }
     
-    const currentSymbol = game.currentPlayer === game.player1 ? 
-        game.player1Symbol : 
-        game.player2Symbol;
-    
-    if (!game.board.makeMove(parseInt(row), parseInt(col), currentSymbol)) {
+    if (!game.board.makeMove(parseInt(row), parseInt(col), currentPlayer.symbol)) {
         return ctx.answerCbQuery('Эта клетка уже занята');
     }
     
     // Проверка победы
     const winner = game.board.hasWinner();
     if (winner) {
-        const winnerName = winner === game.player1Symbol ? 
-            (game.player1 === ctx.from.id ? 'Вы' : 'Игрок 1') : 
-            (game.player2 === ctx.from.id ? 'Вы' : 'Игрок 2');
+        const winnerPlayer = winner === game.player1.symbol ? game.player1 : game.player2;
             
         await ctx.editMessageText(
-            `🏆 Победитель: ${winnerName} (${winner === 'x' ? '❌' : '⭕️'})\n\n` +
+            `🏆 Победитель: ${winnerPlayer.name} (${winner === 'x' ? '❌' : '⭕️'})\n\n` +
             renderBoard(game.board),
             { reply_markup: { inline_keyboard: [] } }
         );
@@ -255,21 +283,16 @@ bot.action(/^ttt_move_(.+)_(\d)_(\d)$/, async (ctx) => {
     }
     
     // Переход хода
-    game.currentPlayer = game.currentPlayer === game.player1 ? 
-        game.player2 : 
-        game.player1;
-    
-    const currentPlayerName = game.currentPlayer === game.player1 ? 
-        (game.player1 === ctx.from.id ? 'Вы' : 'Игрок 1') : 
-        (game.player2 === ctx.from.id ? 'Вы' : 'Игрок 2');
+    game.currentPlayer = game.currentPlayer === game.player1.id ? game.player2.id : game.player1.id;
+    const nextPlayer = game.currentPlayer === game.player1.id ? game.player1 : game.player2;
 
     const keyboard = Markup.inlineKeyboard(
-        createGameKeyboard(gameId, game.board, ctx.from.id === game.currentPlayer)
+        createGameKeyboard(gameId, game.board, game.currentPlayer, ctx.from.id)
     );
 
     await ctx.editMessageText(
-        `🎮 Сейчас ходит: ${currentPlayerName} ` +
-        `(${game.currentPlayer === game.player1 ? game.player1Symbol : game.player2Symbol === 'x' ? '❌' : '⭕️'})\n\n` +
+        `🎮 Сейчас ходит: ${nextPlayer.name} ` +
+        `(${nextPlayer.symbol === 'x' ? '❌' : '⭕️'})\n\n` +
         renderBoard(game.board),
         keyboard
     );
