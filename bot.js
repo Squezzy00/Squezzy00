@@ -612,23 +612,70 @@ bot.command('tagall', async (ctx) => {
                         member.user.first_name;
                     
                     const mention = customText ? 
+bot.command('tagall', async (ctx) => {
+    if (!await isChatAdmin(ctx)) {
+        return ctx.reply('❌ Эта команда только для администраторов чата!');
+    }
+
+    const args = ctx.message.text.split(' ').slice(1);
+    let tagCount = 5;
+    let customText = null;
+
+    if (args.length > 0) {
+        if (!isNaN(args[0])) {
+            tagCount = parseInt(args[0]);
+            if (args.length > 1) {
+                customText = args.slice(1).join(' ');
+            }
+        } else {
+            customText = args.join(' ');
+        }
+    }
+
+    try {
+        await ctx.deleteMessage();
+        
+        // Получаем всех участников чата
+        const members = await ctx.getChatAdministrators();
+        const allMembers = await ctx.getChatMembersCount();
+        const mentions = [];
+        
+        // Тегаем всех участников (кроме ботов)
+        for (let i = 0; i < allMembers; i++) {
+            try {
+                const member = await ctx.getChatMember(ctx.chat.id, i);
+                if (member.user && !member.user.is_bot) {
+                    const name = member.user.last_name ? 
+                        `${member.user.first_name} ${member.user.last_name}` : 
+                        member.user.first_name;
+                    
+                    const mention = customText ? 
                         `<a href="tg://user?id=${member.user.id}">${customText}</a>` :
                         `<a href="tg://user?id=${member.user.id}">${name}</a>`;
                     
                     mentions.push(mention);
                     
                     if (mentions.length >= tagCount) {
-                        await ctx.reply(mentions.join('\n'), { parse_mode: 'HTML' });
-                        mentions.length = 0; // Очищаем массив
+                        await ctx.telegram.sendMessage(
+                            ctx.chat.id, 
+                            mentions.join('\n'), 
+                            { parse_mode: 'HTML' }
+                        );
+                        mentions.length = 0;
                     }
                 }
             } catch (e) {
                 console.error(`Ошибка при теге пользователя: ${e}`);
+                continue;
             }
         }
         
         if (mentions.length > 0) {
-            await ctx.reply(mentions.join('\n'), { parse_mode: 'HTML' });
+            await ctx.telegram.sendMessage(
+                ctx.chat.id, 
+                mentions.join('\n'), 
+                { parse_mode: 'HTML' }
+            );
         }
 
     } catch (e) {
