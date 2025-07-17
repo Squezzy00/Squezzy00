@@ -4,30 +4,32 @@ const fs = require('fs');
 const path = require('path');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const BOT_OWNER_ID = 5005387093;
+const BOT_OWNER_ID = 5005387093; // Ваш ID аккаунта
 let timerCounter = 1;
 const activeKeyboards = new Map();
 const activeTimers = new Map();
 const chatButtons = new Map();
 const disabledCommands = new Set();
-const reportBans = new Set();
-const activeReports = new Map();
-const ticTacToeGames = new Map();
+const reportBans = new Set(); // Для хранения забаненных пользователей
+const activeReports = new Map(); // Для хранения активных репортов (userId -> message)
 
-// Файлы для хранения данных
+// Файл для хранения chat_id
 const CHATS_FILE = path.join(__dirname, 'chats.json');
+// Файл для хранения банов репортов
 const BANS_FILE = path.join(__dirname, 'report_bans.json');
 
-// Загрузка данных
+// Загрузка сохраненных данных
 let knownChats = new Set();
 let savedReportBans = new Set();
 
 try {
+    // Загрузка чатов
     if (fs.existsSync(CHATS_FILE)) {
         const data = fs.readFileSync(CHATS_FILE, 'utf-8');
         knownChats = new Set(JSON.parse(data));
     }
     
+    // Загрузка банов
     if (fs.existsSync(BANS_FILE)) {
         const data = fs.readFileSync(BANS_FILE, 'utf-8');
         savedReportBans = new Set(JSON.parse(data));
@@ -58,11 +60,12 @@ bot.use((ctx, next) => {
     return next();
 });
 
-// Проверка прав
+// Проверка на владельца
 function isOwner(ctx) {
     return ctx.from.id === BOT_OWNER_ID;
 }
 
+// Проверка на администратора чата
 async function isAdmin(ctx) {
     if (ctx.chat.type === 'private') return false;
     try {
@@ -74,242 +77,38 @@ async function isAdmin(ctx) {
     }
 }
 
-async function isChatAdmin(ctx) {
-    if (ctx.chat.type === 'private') return false;
-    try {
-        const member = await ctx.getChatMember(ctx.from.id);
-        return ['creator', 'administrator'].includes(member.status);
-    } catch (e) {
-        console.error('Ошибка проверки администратора:', e);
-        return false;
-    }
-}
-
-// Класс игрового поля (без изменений)
-class Board {
-    constructor() {
-        this.grid = Array(3).fill().map(() => Array(3).fill(null));
-    }
-
-    hasWinner() {
-        // Проверка строк
-        for (let row = 0; row < 3; row++) {
-            if (this.grid[row][0] && 
-                this.grid[row][0] === this.grid[row][1] && 
-                this.grid[row][0] === this.grid[row][2]) {
-                return this.grid[row][0];
-            }
-        }
-
-        // Проверка столбцов
-        for (let col = 0; col < 3; col++) {
-            if (this.grid[0][col] && 
-                this.grid[0][col] === this.grid[1][col] && 
-                this.grid[0][col] === this.grid[2][col]) {
-                return this.grid[0][col];
-            }
-        }
-
-        // Проверка диагоналей
-        if (this.grid[0][0] && 
-            this.grid[0][0] === this.grid[1][1] && 
-            this.grid[0][0] === this.grid[2][2]) {
-            return this.grid[0][0];
-        }
-
-        if (this.grid[0][2] && 
-            this.grid[0][2] === this.grid[1][1] && 
-            this.grid[0][2] === this.grid[2][0]) {
-            return this.grid[0][2];
-        }
-
-        return null;
-    }
-
-    isFull() {
-        return this.grid.flat().every(cell => cell !== null);
-    }
-
-    makeMove(row, col, symbol) {
-        if (this.grid[row][col] === null) {
-            this.grid[row][col] = symbol;
-            return true;
-        }
-        return false;
-    }
-}
-
-function renderBoard(board) {
-    let text = '';
-    for (let row = 0; row < 3; row++) {
-        for (let col = 0; col < 3; col++) {
-            const cell = board.grid[row][col];
-            text += cell === 'x' ? '❌' : cell === 'o' ? '⭕️' : '⬜️';
-            if (col < 2) text += '│';
-        }
-        if (row < 2) text += '\n──┼──┼──\n';
-    }
-    return text;
-}
-
-function createGameKeyboard(gameId, board, currentPlayerId, userId) {
-    const buttons = [];
-    for (let row = 0; row < 3; row++) {
-        const rowButtons = [];
-        for (let col = 0; col < 3; col++) {
-            const cell = board.grid[row][col];
-            rowButtons.push(
-                Markup.button.callback(
-                    cell === 'x' ? '❌' : cell === 'o' ? '⭕️' : '⬜️',
-                    `ttt_move_${gameId}_${row}_${col}`,
-                    cell !== null || userId !== currentPlayerId
-                )
-            );
-        }
-        buttons.push(rowButtons);
-    }
-    return buttons;
-}
-
-bot.command('tictactoe', (ctx) => {
-    const gameId = Date.now().toString();
-    const firstPlayer = Math.random() > 0.5 ? 'x' : 'o';
-    
-    ticTacToeGames.set(gameId, {
-        player1: {
-            id: ctx.from.id,
-            name: ctx.from.username || ctx.from.first_name,
-            symbol: firstPlayer
-        },
-        player2: null,
-        currentPlayer: ctx.from.id,
-        board: new Board(),
-        waitingForPlayer: true
-    });
-
-    const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('Присоединиться к игре', `ttt_join_${gameId}`)]
-    ]);
-
-    ctx.reply(
-        `🧠 Игра в крестики-нолики!\n\n` +
-        `Создатель: ${ctx.from.username || ctx.from.first_name}\n` +
-        `Играет за: ${firstPlayer === 'x' ? '❌ крестики' : '⭕️ нолики'}\n\n` +
-        `ID игры: <code>${gameId}</code>\n` +
-        `Ожидание второго игрока...`,
-        {
-            ...keyboard,
-            parse_mode: 'HTML'
-        }
-    );
-});
-
-bot.action(/^ttt_join_(.+)$/, async (ctx) => {
-    const gameId = ctx.match[1];
-    const game = ticTacToeGames.get(gameId);
-    
-    if (!game) {
-        return ctx.answerCbQuery('Игра не найдена');
-    }
-    
-    if (ctx.from.id === game.player1.id) {
-        return ctx.answerCbQuery('Вы не можете присоединиться к своей игре');
-    }
-    
-    if (game.player2) {
-        return ctx.answerCbQuery('В игре уже есть второй игрок');
-    }
-    
-    const secondPlayerSymbol = game.player1.symbol === 'x' ? 'o' : 'x';
-    game.player2 = {
-        id: ctx.from.id,
-        name: ctx.from.username || ctx.from.first_name,
-        symbol: secondPlayerSymbol
+function getTimeString(amount, unit) {
+    const units = {
+        'с': ['секунду', 'секунды', 'секунд'],
+        'м': ['минуту', 'минуты', 'минут'],
+        'ч': ['час', 'часа', 'часов'],
+        'д': ['день', 'дня', 'дней']
     };
-    game.waitingForPlayer = false;
-    
-    // Первый ход делает игрок, который создал игру
-    game.currentPlayer = game.player1.id;
 
-    const keyboard = Markup.inlineKeyboard(
-        createGameKeyboard(gameId, game.board, game.currentPlayer, ctx.from.id)
-    );
+    let word;
+    if (amount % 10 === 1 && amount % 100 !== 11) {
+        word = units[unit][0];
+    } else if ([2, 3, 4].includes(amount % 10) && ![12, 13, 14].includes(amount % 100)) {
+        word = units[unit][1];
+    } else {
+        word = units[unit][2];
+    }
 
-    await ctx.editMessageText(
-        `🎮 Игра началась!\n\n` +
-        `${game.player1.name} (${game.player1.symbol === 'x' ? '❌' : '⭕️'}) vs ` +
-        `${game.player2.name} (${game.player2.symbol === 'x' ? '❌' : '⭕️'})\n\n` +
-        `Сейчас ходит: ${game.player1.name}\n\n` +
-        renderBoard(game.board),
-        keyboard
-    );
-    
-    return ctx.answerCbQuery('Вы успешно присоединились к игре');
+    return `${amount} ${word}`;
+}
+
+// Middleware для проверки отключенных команд
+bot.use((ctx, next) => {
+    if (ctx.message && ctx.message.text && ctx.message.text.startsWith('/')) {
+        const command = ctx.message.text.split(' ')[0].slice(1).toLowerCase();
+        if (disabledCommands.has(command) && !isOwner(ctx)) {
+            return ctx.reply(`❌ Команда /${command} временно отключена`);
+        }
+    }
+    return next();
 });
 
-bot.action(/^ttt_move_(.+)_(\d)_(\d)$/, async (ctx) => {
-    const [_, gameId, row, col] = ctx.match;
-    const game = ticTacToeGames.get(gameId);
-    
-    if (!game) {
-        return ctx.answerCbQuery('Игра не найдена');
-    }
-    
-    if (game.waitingForPlayer) {
-        return ctx.answerCbQuery('Ожидание второго игрока');
-    }
-    
-    const currentPlayer = game.currentPlayer === game.player1.id ? game.player1 : game.player2;
-    
-    if (ctx.from.id !== currentPlayer.id) {
-        return ctx.answerCbQuery('Сейчас не ваш ход');
-    }
-    
-    if (!game.board.makeMove(parseInt(row), parseInt(col), currentPlayer.symbol)) {
-        return ctx.answerCbQuery('Эта клетка уже занята');
-    }
-    
-    // Проверка победы
-    const winner = game.board.hasWinner();
-    if (winner) {
-        const winnerPlayer = winner === game.player1.symbol ? game.player1 : game.player2;
-            
-        await ctx.editMessageText(
-            `🏆 Победитель: ${winnerPlayer.name} (${winner === 'x' ? '❌' : '⭕️'})\n\n` +
-            renderBoard(game.board),
-            { reply_markup: { inline_keyboard: [] } }
-        );
-        ticTacToeGames.delete(gameId);
-        return;
-    }
-    
-    // Проверка ничьи
-    if (game.board.isFull()) {
-        await ctx.editMessageText(
-            '🐉 Игра закончилась ничьей!\n\n' + renderBoard(game.board),
-            { reply_markup: { inline_keyboard: [] } }
-        );
-        ticTacToeGames.delete(gameId);
-        return;
-    }
-    
-    // Переход хода
-    game.currentPlayer = game.currentPlayer === game.player1.id ? game.player2.id : game.player1.id;
-    const nextPlayer = game.currentPlayer === game.player1.id ? game.player1 : game.player2;
-
-    const keyboard = Markup.inlineKeyboard(
-        createGameKeyboard(gameId, game.board, game.currentPlayer, ctx.from.id)
-    );
-
-    await ctx.editMessageText(
-        `🎮 Сейчас ходит: ${nextPlayer.name} ` +
-        `(${nextPlayer.symbol === 'x' ? '❌' : '⭕️'})\n\n` +
-        renderBoard(game.board),
-        keyboard
-    );
-});
-
-// Оригинальный /start без изменений
+// Стартовое сообщение
 bot.start((ctx) => {
     const username = ctx.message.from.username ? `@${ctx.message.from.username}` : ctx.message.from.first_name;
     ctx.reply(
@@ -325,121 +124,9 @@ bot.start((ctx) => {
         `/stop - скрыть свою клавиатуру\n` +
         `/timers - показать активные таймеры\n` +
         `/cancel [ID] - отменить таймер\n` +
-        `/open - показать общие кнопки чата\n` +
-        `/tictactoe - играть в крестики-нолики\n\n` +
+        `/open - показать общие кнопки чата\n\n` +
         `DEVELOPER: @SQUEZZY00`
     ).catch(e => console.error('Ошибка при отправке start:', e));
-});
-
-// Команда присоединения к игре
-bot.command('jointtt', (ctx) => {
-    const gameId = ctx.message.text.split(' ')[1];
-    if (!ticTacToeGames.has(gameId)) {
-        return ctx.reply('Игра не найдена или уже началась');
-    }
-
-    const game = ticTacToeGames.get(gameId);
-    if (game.player1 === ctx.from.id) {
-        return ctx.reply('Вы не можете играть сами с собой!');
-    }
-
-    game.player2 = ctx.from.id;
-    game.waitingForPlayer = false;
-    
-    const player1Name = game.player1 === ctx.from.id ? 
-        'Вы' : 
-        (ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name);
-    const player2Name = game.player2 === ctx.from.id ? 
-        'Вы' : 
-        (ctx.message.from.username ? `@${ctx.message.from.username}` : ctx.message.from.first_name);
-
-    const keyboard = Markup.inlineKeyboard(
-        createGameKeyboard(gameId, game.board, ctx.from.id === game.currentPlayer)
-    );
-
-    ctx.reply(
-        `🎮 Игра началась!\n\n` +
-        `${player1Name} (${game.player1Symbol === 'x' ? '❌' : '⭕️'}) vs ` +
-        `${player2Name} (${game.player2Symbol === 'x' ? '❌' : '⭕️'})\n\n` +
-        `Сейчас ходит: ${game.currentPlayer === game.player1 ? player1Name : player2Name}\n\n` +
-        renderBoard(game.board),
-        {
-            ...keyboard,
-            parse_mode: 'HTML'
-        }
-    );
-});
-
-// Обработчик ходов
-bot.action(/^ttt_(.+)_(\d)_(\d)$/, async (ctx) => {
-    const [_, gameId, row, col] = ctx.match;
-    const game = ticTacToeGames.get(gameId);
-    
-    if (!game) {
-        return ctx.answerCbQuery('Игра не найдена');
-    }
-    
-    if (game.waitingForPlayer) {
-        return ctx.answerCbQuery('Ожидание второго игрока');
-    }
-    
-    if (ctx.from.id !== game.currentPlayer) {
-        return ctx.answerCbQuery('Сейчас не ваш ход');
-    }
-    
-    const currentSymbol = game.currentPlayer === game.player1 ? 
-        game.player1Symbol : 
-        game.player2Symbol;
-    
-    if (!game.board.makeMove(parseInt(row), parseInt(col), currentSymbol)) {
-        return ctx.answerCbQuery('Эта клетка уже занята');
-    }
-    
-    // Проверка победы
-    const winner = game.board.hasWinner();
-    if (winner) {
-        const winnerName = winner === game.player1Symbol ? 
-            (game.player1 === ctx.from.id ? 'Вы' : 'Игрок 1') : 
-            (game.player2 === ctx.from.id ? 'Вы' : 'Игрок 2');
-            
-        await ctx.editMessageText(
-            `🏆 Победитель: ${winnerName} (${winner === 'x' ? '❌' : '⭕️'})\n\n` +
-            renderBoard(game.board),
-            { reply_markup: { inline_keyboard: [] } }
-        );
-        ticTacToeGames.delete(gameId);
-        return;
-    }
-    
-    // Проверка ничьи
-    if (game.board.isFull()) {
-        await ctx.editMessageText(
-            '🐉 Игра закончилась ничьей!\n\n' + renderBoard(game.board),
-            { reply_markup: { inline_keyboard: [] } }
-        );
-        ticTacToeGames.delete(gameId);
-        return;
-    }
-    
-    // Переход хода
-    game.currentPlayer = game.currentPlayer === game.player1 ? 
-        game.player2 : 
-        game.player1;
-    
-    const currentPlayerName = game.currentPlayer === game.player1 ? 
-        (game.player1 === ctx.from.id ? 'Вы' : 'Игрок 1') : 
-        (game.player2 === ctx.from.id ? 'Вы' : 'Игрок 2');
-
-    const keyboard = Markup.inlineKeyboard(
-        createGameKeyboard(gameId, game.board, ctx.from.id === game.currentPlayer)
-    );
-
-    await ctx.editMessageText(
-        `🎮 Сейчас ходит: ${currentPlayerName} ` +
-        `(${game.currentPlayer === game.player1 ? game.player1Symbol : game.player2Symbol === 'x' ? '❌' : '⭕️'})\n\n` +
-        renderBoard(game.board),
-        keyboard
-    );
 });
 
 // Команда /see - создает постоянную клавиатуру
@@ -571,116 +258,6 @@ bot.command('stop', (ctx) => {
         ctx.reply('У вас нет активной клавиатуры. Сначала используйте /see или /open', {
             reply_to_message_id: ctx.message.message_id
         }).catch(e => console.error('Ошибка при отправке stop:', e));
-    }
-});
-
-bot.command('tagall', async (ctx) => {
-    // Проверка прав
-    if (!await isChatAdmin(ctx)) {
-        return ctx.reply('❌ Эта команда только для администраторов чата!');
-    }
-
-    const args = ctx.message.text.split(' ').slice(1);
-    let tagCount = 5;
-    let customText = null;
-
-    // Парсинг аргументов
-    if (args.length > 0) {
-        if (!isNaN(args[0])) {
-            tagCount = parseInt(args[0]);
-            if (args.length > 1) {
-                customText = args.slice(1).join(' ');
-            }
-        } else {
-            customText = args.join(' ');
-        }
-    }
-
-    try {
-        await ctx.deleteMessage(); // Удаляем команду
-        
-        const membersCount = await ctx.getChatMembersCount();
-        const mentions = [];
-        
-        // Для демонстрации - тегнем первых 10 участников (из-за ограничений API)
-        for (let i = 0; i < Math.min(membersCount, 10); i++) {
-            try {
-                const member = await ctx.getChatMember(ctx.from.id + i);
-                if (member.user && !member.user.is_bot) {
-                    const name = member.user.last_name ? 
-                        `${member.user.first_name} ${member.user.last_name}` : 
-                        member.user.first_name;
-                    
-                    const mention = customText ? 
-bot.command('tagall', async (ctx) => {
-    if (!await isChatAdmin(ctx)) {
-        return ctx.reply('❌ Эта команда только для администраторов чата!');
-    }
-
-    const args = ctx.message.text.split(' ').slice(1);
-    let tagCount = 5;
-    let customText = null;
-
-    if (args.length > 0) {
-        if (!isNaN(args[0])) {
-            tagCount = parseInt(args[0]);
-            if (args.length > 1) {
-                customText = args.slice(1).join(' ');
-            }
-        } else {
-            customText = args.join(' ');
-        }
-    }
-
-    try {
-        await ctx.deleteMessage();
-        
-        // Получаем всех участников чата
-        const members = await ctx.getChatAdministrators();
-        const allMembers = await ctx.getChatMembersCount();
-        const mentions = [];
-        
-        // Тегаем всех участников (кроме ботов)
-        for (let i = 0; i < allMembers; i++) {
-            try {
-                const member = await ctx.getChatMember(ctx.chat.id, i);
-                if (member.user && !member.user.is_bot) {
-                    const name = member.user.last_name ? 
-                        `${member.user.first_name} ${member.user.last_name}` : 
-                        member.user.first_name;
-                    
-                    const mention = customText ? 
-                        `<a href="tg://user?id=${member.user.id}">${customText}</a>` :
-                        `<a href="tg://user?id=${member.user.id}">${name}</a>`;
-                    
-                    mentions.push(mention);
-                    
-                    if (mentions.length >= tagCount) {
-                        await ctx.telegram.sendMessage(
-                            ctx.chat.id, 
-                            mentions.join('\n'), 
-                            { parse_mode: 'HTML' }
-                        );
-                        mentions.length = 0;
-                    }
-                }
-            } catch (e) {
-                console.error(`Ошибка при теге пользователя: ${e}`);
-                continue;
-            }
-        }
-        
-        if (mentions.length > 0) {
-            await ctx.telegram.sendMessage(
-                ctx.chat.id, 
-                mentions.join('\n'), 
-                { parse_mode: 'HTML' }
-            );
-        }
-
-    } catch (e) {
-        console.error('Ошибка в команде tagall:', e);
-        ctx.reply('❌ Произошла ошибка при выполнении команды');
     }
 });
 
