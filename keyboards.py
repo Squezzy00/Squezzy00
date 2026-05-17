@@ -5,7 +5,8 @@ def main_keyboard():
         [KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="💰 Мой баланс")],
         [KeyboardButton(text="💼 Работать"), KeyboardButton(text="🏦 Положить в банк"), KeyboardButton(text="🏦 Снять с банка")],
         [KeyboardButton(text="🎮 Игры"), KeyboardButton(text="⚡ Моя энергия")],
-        [KeyboardButton(text="🏆 Топ игроков"), KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="🏆 Топ игроков"), KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="🌍 Состояние мира")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
