@@ -62,6 +62,14 @@ async def update_level(user_id, level, exp):
     async with pool.acquire() as conn:
         await conn.execute("UPDATE users SET level = $1, exp = $2 WHERE user_id = $3", level, exp, user_id)
 
+async def record_world_action(user_id, action):
+    """Записывает действие пользователя для мира"""
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO world_actions (user_id, action, time)
+            VALUES ($1, $2, NOW())
+        """, user_id, action)
+
 async def get_top_users(limit=10):
     async with pool.acquire() as conn:
         return await conn.fetch(
