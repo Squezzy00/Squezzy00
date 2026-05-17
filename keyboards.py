@@ -1,4 +1,4 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 def main_keyboard():
     buttons = [
@@ -11,7 +11,7 @@ def main_keyboard():
 
 def games_keyboard():
     buttons = [
-        [KeyboardButton(text="кости 5000"), KeyboardButton(text="слоты 5000"), KeyboardButton(text="монетка 5000")],
+        [KeyboardButton(text="🎲 кости 5000"), KeyboardButton(text="🎰 слоты 5000"), KeyboardButton(text="🪙 монетка 5000")],
         [KeyboardButton(text="◀️ Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -19,3 +19,15 @@ def games_keyboard():
 def back_keyboard():
     buttons = [[KeyboardButton(text="◀️ Назад")]]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_work_keyboard(round_num, action, button_text):
+    buttons = [[InlineKeyboardButton(text=button_text, callback_data=f"work_{action}_{round_num}")]]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_bank_keyboard():
+    buttons = [
+        [InlineKeyboardButton(text="➕ Положить", callback_data="bank_deposit")],
+        [InlineKeyboardButton(text="➖ Снять", callback_data="bank_withdraw")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="bank_back")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
