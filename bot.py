@@ -32,6 +32,72 @@ async def cmd_start(message: Message):
     )
     await message.answer(text, reply_markup=main_keyboard())
 
+# ========== СОСТОЯНИЕ МИРА ==========
+@dp.message(lambda message: message.text == "🌍 Состояние мира")
+async def world_status(message: Message):
+    from world import world_state
+    
+    # Визуальные шкалы
+    def get_bar(value):
+        filled = int((value + 100) / 200 * 10)
+        return "█" * filled + "░" * (10 - filled)
+    
+    def get_status(value, high_good=False):
+        if high_good:
+            if value >= 70: return "🔴 ОПАСНО"
+            if value >= 40: return "🟡 СРЕДНЕ"
+            return "🟢 ХОРОШО"
+        else:
+            if value >= 70: return "🟢 ХОРОШО"
+            if value >= 40: return "🟡 СРЕДНЕ"
+            return "🔴 ПЛОХО"
+    
+    text = (
+        "🌍 **YUMA WORLD** 🌍\n"
+        "╔══════════════════════════════════════╗\n"
+        f"║  🌡️ НАПРЯЖЕНИЕ    [{get_bar(world_state['tension'])}] {world_state['tension']}\n"
+        f"║  💰 ИНФЛЯЦИЯ       [{get_bar(world_state['inflation'])}] {world_state['inflation']}\n"
+        f"║  ⚖️ ЗАКОННОСТЬ     [{get_bar(world_state['legality'])}] {world_state['legality']}\n"
+        f"║  🤝 ДОВЕРИЕ        [{get_bar(world_state['trust'])}] {world_state['trust']}\n"
+        f"║  🌱 РАЗВИТИЕ       [{get_bar(world_state['development'])}] {world_state['development']}\n"
+        f"║  🔮 ХАОС           [{get_bar(world_state['chaos'])}] {world_state['chaos']}\n"
+        "╚══════════════════════════════════════╝\n"
+    )
+    
+    # Активное событие
+    if world_state.get("active_event"):
+        event = world_state["active_event"]
+        end_time = world_state.get("event_end_time")
+        remaining = ""
+        if end_time:
+            remaining_delta = end_time - datetime.now()
+            hours = int(remaining_delta.total_seconds() // 3600)
+            minutes = int((remaining_delta.total_seconds() % 3600) // 60)
+            remaining = f" Осталось: {hours}ч {minutes}м"
+        
+        text += (
+            "\n⚡ **АКТИВНОЕ СОБЫТИЕ** ⚡\n"
+            "╔══════════════════════════════════════╗\n"
+            f"║  {event['name']}\n"
+            "║ ──────────────────────────────────── ║\n"
+            f"║  {event['desc']}\n"
+            f"║{remaining}\n"
+            "╚══════════════════════════════════════╝\n"
+        )
+    else:
+        text += "\n✨ Мир спокоен. Наслаждайся затишьем ✨"
+    
+    # Добавляем прогноз
+    text += "\n\n📈 **ПРОГНОЗ**\n"
+    if world_state["tension"] > 60:
+        text += "⚠️ Напряжение растёт — жди конфликтов\n"
+    if world_state["chaos"] > 50:
+        text += "🌀 Хаос нарастает — возможны аномалии\n"
+    if world_state["development"] > 60:
+        text += "✨ Развитие идёт полным ходом — работа будет прибыльной\n"
+    
+    await message.answer(text)
+    
 # ========== ПРОФИЛЬ ==========
 @dp.message(lambda message: message.text == "👤 Мой профиль")
 async def profile(message: Message):
