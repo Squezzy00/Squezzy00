@@ -1,14 +1,17 @@
 import asyncio
 import random
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from config import BOT_TOKEN, ADMIN_ID
-from database import init_db, get_user, create_user, update_balance, update_energy, update_work_time, get_top_users
-from keyboards import main_keyboard, games_keyboard, back_keyboard
+from database import init_db, get_user, create_user, update_balance, update_energy, update_work_streak, update_last_work_hour, get_top_users, update_exp, update_level
+from keyboards import main_keyboard, games_keyboard, get_work_keyboard, back_keyboard, get_bank_keyboard
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+active_works = {}
 
 # ========== СТАРТ ==========
 @dp.message(Command("start"))
@@ -16,92 +19,289 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     name = message.from_user.full_name
     await create_user(user_id, name)
-    await message.answer(
-        f"🎮 Добро пожаловать в YumaBot, {name}!\n\n"
-        f"Используй кнопки ниже для навигации 👇",
-        reply_markup=main_keyboard()
+    
+    text = (
+        "🎴 **YUMA BOT** 🎴\n"
+        "┏━━━━━━━━━━━━━━━━━━━━┓\n"
+        f"┃  Добро пожаловать, {name}\n"
+        "┃  Твой путь к величию начинается\n"
+        "┃  здесь и сейчас.\n"
+        "┗━━━━━━━━━━━━━━━━━━━━┛\n\n"
+        "✨ **Используй кнопки ниже** ✨\n"
+        "💫 Удачи в приключениях, воин!"
     )
+    await message.answer(text, reply_markup=main_keyboard())
 
 # ========== ПРОФИЛЬ ==========
 @dp.message(lambda message: message.text == "👤 Мой профиль")
 async def profile(message: Message):
     user = await get_user(message.from_user.id)
-    if user:
-        text = (f"🎮 {user['name']}, твой профиль:\n\n"
-                f"🆔 ID: {user['user_id']}\n"
-                f"💰 Наличка: {user['cash']:,}€\n"
-                f"🏦 В банке: {user['bank']:,}€\n"
-                f"⚡ Энергия: {user['energy']}/100\n"
-                f"🏆 Опыт: {user['exp']:,}\n"
-                f"📊 Уровень: {user['level']}\n"
-                f"💎 Статус: {user['status']}")
-        await message.answer(text)
+    
+    if user['level'] >= 50:
+        status_icon = "👑"
+        status_text = "Легенда"
+    elif user['level'] >= 25:
+        status_icon = "💎"
+        status_text = "Мастер"
+    elif user['level'] >= 10:
+        status_icon = "⭐"
+        status_text = "Ветеран"
+    elif user['level'] >= 5:
+        status_icon = "🌟"
+        status_text = "Боец"
     else:
-        await message.answer("❌ Ты не зарегистрирован. Напиши /start")
+        status_icon = "🌱"
+        status_text = "Новичок"
+    
+    text = (
+        f"🎴 **{user['name']}** 🎴\n"
+        "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
+        f"┃ 🆔 **ID** ━━━ {user['user_id']}\n"
+        f"┃ {status_icon} **Статус** ━ {status_text}\n"
+        f"┃ 📊 **Уровень** ━ {user['level']}\n"
+        "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
+        f"┃ 💰 **Наличка** ━ {user['cash']:,} €\n"
+        f"┃ 🏦 **Банк** ━━━ {user['bank']:,} €\n"
+        f"┃ 💰 **Всего** ━━ {user['cash'] + user['bank']:,} €\n"
+        "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
+        f"┃ ⚡ **Энергия** ━ {user['energy']}/100\n"
+        f"┃ 🏆 **Опыт** ━━ {user['exp']:,} / {user['level'] * 1000}\n"
+        "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+    )
+    await message.answer(text)
 
 # ========== БАЛАНС ==========
 @dp.message(lambda message: message.text == "💰 Мой баланс")
 async def balance(message: Message):
     user = await get_user(message.from_user.id)
-    await message.answer(f"💰 Твой баланс:\n\n💵 Наличка: {user['cash']:,}€\n🏦 В банке: {user['bank']:,}€")
+    text = (
+        "🏦 **БАЛАНС** 🏦\n"
+        "╔════════════════════════╗\n"
+        f"║ 💵 **Наличные** │ {user['cash']:,} €\n"
+        "║ ────────────────────── ║\n"
+        f"║ 🏦 **Банк**     │ {user['bank']:,} €\n"
+        "║ ────────────────────── ║\n"
+        f"║ 💰 **Итого**    │ {user['cash'] + user['bank']:,} €\n"
+        "╚════════════════════════╝"
+    )
+    await message.answer(text)
 
 # ========== ЭНЕРГИЯ ==========
 @dp.message(lambda message: message.text == "⚡ Моя энергия")
 async def energy(message: Message):
     user = await get_user(message.from_user.id)
-    await message.answer(f"⚡ Твоя энергия: {user['energy']}/100\n\nВосстанавливается на 5 каждые 30 минут")
+    
+    energy_bars = "█" * (user['energy'] // 10) + "░" * (10 - user['energy'] // 10)
+    
+    text = (
+        "⚡ **ЭНЕРГИЯ** ⚡\n"
+        "╔════════════════════════╗\n"
+        f"║ [{energy_bars}]\n"
+        f"║\n"
+        f"║ 📊 **Текущий запас** │ {user['energy']} / 100\n"
+        "║ ────────────────────── ║\n"
+        "║ 🔄 **Восстановление** │ +5 / 30 мин\n"
+        "║ 💪 **Работа требует** │ 10 энергии\n"
+        "╚════════════════════════╝"
+    )
+    await message.answer(text)
 
 # ========== РАБОТА ==========
 @dp.message(lambda message: message.text == "💼 Работать")
-async def work(message: Message):
-    user = await get_user(message.from_user.id)
+async def start_work(message: Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
     
     if user['energy'] < 10:
-        await message.answer("❌ Недостаточно энергии! Отдохни, энергия восстанавливается каждые 30 минут.")
+        text = (
+            "❌ **НЕДОСТАТОЧНО ЭНЕРГИИ** ❌\n"
+            "╔════════════════════════════╗\n"
+            "║  Требуется энергии: 10     ║\n"
+            f"║  Твоя энергия:     {user['energy']}        ║\n"
+            "║ ───────────────────────── ║\n"
+            "║  💤 Отдохни, энергия       ║\n"
+            "║  восстанавливается каждые  ║\n"
+            "║  30 минут.                 ║\n"
+            "╚════════════════════════════╝"
+        )
+        await message.answer(text)
         return
     
-    reward = random.randint(30000, 80000) + user['level'] * 5000
-    exp_gain = random.randint(50, 150)
+    current_hour = datetime.now().hour
+    if user['last_work_hour'] == current_hour and user['work_streak'] >= 3:
+        text = (
+            "⏰ **ЛИМИТ РАБОТЫ** ⏰\n"
+            "╔════════════════════════════╗\n"
+            "║  Ты уже отработал 3 смены  ║\n"
+            "║  в этом часе.              ║\n"
+            "║ ───────────────────────── ║\n"
+            "║  🍵 Отдохни, следующая     ║\n"
+            "║  смена через час!          ║\n"
+            "╚════════════════════════════╝"
+        )
+        await message.answer(text)
+        return
     
-    await update_balance(message.from_user.id, reward, 'cash')
-    await update_energy(message.from_user.id, -10)
+    scenes = [
+        ("🧹 **УБОРЩИК ПАГОДЫ**", "лужа в коридоре", "🧽 Убрать", "clean"),
+        ("🧹 **УБОРЩИК ПАГОДЫ**", "пятно на полу", "🧴 Средство", "spray"),
+        ("🧹 **УБОРЩИК ПАГОДЫ**", "мокрый вход", "⚠️ Знак", "sign"),
+        ("🍣 **ПОВАР СУШИ**", "заказ с тунцом", "🐟 Тунец", "tuna"),
+        ("🍣 **ПОВАР СУШИ**", "заказ с лососем", "🐠 Лосось", "salmon"),
+        ("⚔️ **ТРЕНИРОВКА**", "удар по мешку", "👊 Прямой удар", "punch"),
+        ("⚔️ **ТРЕНИРОВКА**", "блок удара", "🛡️ Поставить блок", "block"),
+        ("📦 **КЛАДОВЩИК**", "разгрузить товар", "📦 Взять коробку", "take"),
+        ("📦 **КЛАДОВЩИК**", "отправить на склад", "🚛 Погрузить", "load"),
+    ]
+    
+    random.shuffle(scenes)
+    work_rounds = scenes[:3]
+    
+    active_works[user_id] = {
+        "rounds": work_rounds,
+        "current_round": 0,
+        "streak": user['work_streak'] if user['last_work_hour'] == current_hour else 0,
+        "hour": current_hour,
+        "perfect": True
+    }
+    
+    await next_work_round(message, user_id)
+
+async def next_work_round(message: Message, user_id):
+    work_data = active_works.get(user_id)
+    if not work_data:
+        return
+    
+    current = work_data["current_round"]
+    rounds = work_data["rounds"]
+    
+    if current >= len(rounds):
+        await finish_work(message, user_id)
+        return
+    
+    job_title, situation, button_text, action = rounds[current]
+    round_num = current + 1
+    
+    text = (
+        f"🛠 **РАБОЧАЯ СМЕНА** 🛠\n"
+        "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
+        f"┃  {job_title}\n"
+        "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
+        f"┃  🔢 **раунд:** {round_num}/3\n"
+        f"┃  📋 **ситуация:** {situation}\n"
+        "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
+        f"┃  🎯 **нажми:** {button_text}\n"
+        "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n"
+        "👇 **выбери нужную кнопку**"
+    )
+    
+    await message.answer(text, reply_markup=get_work_keyboard(round_num, action, button_text))
+
+@dp.callback_query(lambda c: c.data.startswith("work_"))
+async def handle_work_action(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    work_data = active_works.get(user_id)
+    
+    if not work_data:
+        await callback.answer("❌ Нет активной смены!", show_alert=True)
+        return
+    
+    _, action, round_num = callback.data.split("_")
+    round_num = int(round_num)
+    
+    if work_data["current_round"] + 1 != round_num:
+        await callback.answer("❌ Не та кнопка!", show_alert=True)
+        return
+    
+    _, _, _, expected_action = work_data["rounds"][work_data["current_round"]]
+    
+    if action != expected_action:
+        work_data["perfect"] = False
+        await callback.answer("⚠️ Неправильно! Но двигаемся дальше...", show_alert=True)
+    else:
+        await callback.answer("✅ Правильно!", show_alert=False)
+    
+    work_data["current_round"] += 1
+    await callback.message.delete()
+    await next_work_round(callback.message, user_id)
+
+async def finish_work(message: Message, user_id):
+    work_data = active_works.pop(user_id, {})
+    user = await get_user(user_id)
+    
+    base_reward = random.randint(30000, 80000) + user['level'] * 5000
+    exp_gain = random.randint(50, 150)
+    perfect_bonus = 0
+    perfect_text = ""
+    
+    if work_data.get("perfect", False):
+        perfect_bonus = int(base_reward * 0.08)
+        perfect_text = "\n║  🏆 **идеальная смена** │ +8%"
+    
+    total_reward = base_reward + perfect_bonus
+    
+    current_hour = datetime.now().hour
+    new_streak = work_data.get("streak", 0) + 1
+    await update_work_streak(user_id, new_streak)
+    await update_last_work_hour(user_id, current_hour)
+    
+    await update_balance(user_id, total_reward, 'cash')
+    await update_energy(user_id, -10)
     
     new_exp = user['exp'] + exp_gain
     new_level = user['level']
-    level_up = False
+    level_up_text = ""
     
     if new_exp >= user['level'] * 1000:
         new_level = user['level'] + 1
-        level_up = True
-        from database import pool
-        async with pool.acquire() as conn:
-            await conn.execute("UPDATE users SET exp = $1, level = $2 WHERE user_id = $3", new_exp, new_level, message.from_user.id)
+        await update_level(user_id, new_level, new_exp)
+        level_up_text = (
+            "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎉 **LEVEL UP!** {user['level']} → {new_level} 🎉\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
     else:
-        from database import pool
-        async with pool.acquire() as conn:
-            await conn.execute("UPDATE users SET exp = $1 WHERE user_id = $2", new_exp, message.from_user.id)
+        await update_exp(user_id, new_exp)
     
-    await update_work_time(message.from_user.id)
+    text = (
+        "✅ **СМЕНА ЗАВЕРШЕНА** ✅\n"
+        "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
+        f"┃  🔢 **шагов пройдено:** 3/3\n"
+        "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
+        f"┃  💴 **награда:** +{total_reward:,} €\n"
+        f"┃  📈 **опыт:** +{exp_gain}\n"
+        f"{perfect_text}"
+        "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n"
+        f"┃  🔥 **подряд смен:** {new_streak}\n"
+        f"┃  ⏱ **за час:** {new_streak}/3\n"
+        "┃  ⌛ **отдых:** 02м 00с\n"
+        "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+        f"{level_up_text}"
+    )
     
-    result = f"✅ Ты отработал смену и получил:\n💰 {reward:,}€\n⭐️ +{exp_gain} опыта\n⚡ -10 энергии"
-    if level_up:
-        result += f"\n\n🎉 ПОЗДРАВЛЯЮ! Ты повысил уровень до {new_level}! 🎉"
-    
-    await message.answer(result)
+    await message.answer(text)
 
 # ========== БАНК ==========
 @dp.message(lambda message: message.text == "🏦 Положить в банк")
 async def bank_deposit_prompt(message: Message):
-    await message.answer("💰 Введи команду: банк положить [сумма]\n\nПример: банк положить 50000")
+    text = (
+        "🏦 **БАНК** 🏦\n"
+        "╔════════════════════════════╗\n"
+        "║  Введи команду:            ║\n"
+        "║  💸 **положить [сумма]**    ║\n"
+        "║  💸 **снять [сумма]**       ║\n"
+        "║ ───────────────────────── ║\n"
+        "║  📝 **Пример:**            ║\n"
+        "║  положить 50000            ║\n"
+        "║  снять 25000               ║\n"
+        "╚════════════════════════════╝"
+    )
+    await message.answer(text)
 
-@dp.message(lambda message: message.text == "🏦 Снять с банка")
-async def bank_withdraw_prompt(message: Message):
-    await message.answer("💰 Введи команду: банк снять [сумма]\n\nПример: банк снять 50000")
-
-@dp.message(lambda message: message.text.startswith("банк положить"))
+@dp.message(lambda message: message.text.startswith("положить"))
 async def bank_deposit(message: Message):
     try:
-        amount = int(message.text.split()[2])
+        amount = int(message.text.split()[1])
         user = await get_user(message.from_user.id)
         
         if amount <= 0:
@@ -109,16 +309,23 @@ async def bank_deposit(message: Message):
         elif user['cash'] >= amount:
             await update_balance(message.from_user.id, -amount, 'cash')
             await update_balance(message.from_user.id, amount, 'bank')
-            await message.answer(f"✅ {amount:,}€ положено в банк")
+            text = (
+                "🏦 **ПОПОЛНЕНИЕ** 🏦\n"
+                "╔════════════════════════════╗\n"
+                f"║  ✅ {amount:,} € положено    ║\n"
+                "║  в банк.                    ║\n"
+                "╚════════════════════════════╝"
+            )
+            await message.answer(text)
         else:
-            await message.answer(f"❌ Недостаточно налички. У тебя {user['cash']:,}€")
+            await message.answer(f"❌ Недостаточно налички! У тебя {user['cash']:,} €")
     except:
-        await message.answer("❌ Пример: банк положить 50000")
+        await message.answer("❌ Пример: положить 50000")
 
-@dp.message(lambda message: message.text.startswith("банк снять"))
+@dp.message(lambda message: message.text.startswith("снять"))
 async def bank_withdraw(message: Message):
     try:
-        amount = int(message.text.split()[2])
+        amount = int(message.text.split()[1])
         user = await get_user(message.from_user.id)
         
         if amount <= 0:
@@ -126,16 +333,32 @@ async def bank_withdraw(message: Message):
         elif user['bank'] >= amount:
             await update_balance(message.from_user.id, amount, 'cash')
             await update_balance(message.from_user.id, -amount, 'bank')
-            await message.answer(f"✅ {amount:,}€ снято с банка")
+            text = (
+                "🏦 **СНЯТИЕ** 🏦\n"
+                "╔════════════════════════════╗\n"
+                f"║  ✅ {amount:,} € снято       ║\n"
+                "║  с банка.                   ║\n"
+                "╚════════════════════════════╝"
+            )
+            await message.answer(text)
         else:
-            await message.answer(f"❌ Недостаточно в банке. У тебя {user['bank']:,}€")
+            await message.answer(f"❌ Недостаточно в банке! У тебя {user['bank']:,} €")
     except:
-        await message.answer("❌ Пример: банк снять 50000")
+        await message.answer("❌ Пример: снять 50000")
 
 # ========== ИГРЫ ==========
 @dp.message(lambda message: message.text == "🎮 Игры")
 async def games_menu(message: Message):
-    await message.answer("🎲 Выбери игру:", reply_markup=games_keyboard())
+    text = (
+        "🎲 **ИГРЫ** 🎲\n"
+        "╔════════════════════════════╗\n"
+        "║  🎲 **кости** [сумма]       ║\n"
+        "║  🎰 **слоты** [сумма]       ║\n"
+        "║  🪙 **монетка** [сумма]     ║\n"
+        "╚════════════════════════════╝\n"
+        "📝 **Пример:** кости 5000"
+    )
+    await message.answer(text, reply_markup=games_keyboard())
 
 @dp.message(lambda message: message.text == "◀️ Назад")
 async def back_to_menu(message: Message):
@@ -144,19 +367,14 @@ async def back_to_menu(message: Message):
 @dp.message(lambda message: message.text.startswith("кости"))
 async def dice_game(message: Message):
     try:
-        parts = message.text.split()
-        if len(parts) != 2:
-            await message.answer("❌ Пример: кости 5000")
-            return
-        
-        bet = int(parts[1])
+        bet = int(message.text.split()[1])
         user = await get_user(message.from_user.id)
         
         if bet <= 0:
             await message.answer("❌ Ставка должна быть больше 0")
             return
         if user['cash'] < bet:
-            await message.answer(f"❌ Недостаточно денег! У тебя {user['cash']:,}€")
+            await message.answer(f"❌ Недостаточно денег! У тебя {user['cash']:,} €")
             return
         
         user_roll = random.randint(1, 6)
@@ -165,31 +383,53 @@ async def dice_game(message: Message):
         if user_roll > bot_roll:
             win = bet
             await update_balance(message.from_user.id, win, 'cash')
-            await message.answer(f"🎲 Твой бросок: {user_roll}\n🤖 Бросок бота: {bot_roll}\n\n✅ Ты выиграл {win:,}€!")
+            text = (
+                "🎲 **КОСТИ** 🎲\n"
+                "╔════════════════════════════╗\n"
+                f"║  🎲 Твой бросок: {user_roll}         ║\n"
+                f"║  🤖 Бросок бота: {bot_roll}         ║\n"
+                "║ ───────────────────────── ║\n"
+                f"║  ✅ Ты выиграл {win:,} €!      ║\n"
+                "╚════════════════════════════╝"
+            )
+            await message.answer(text)
         elif user_roll < bot_roll:
             await update_balance(message.from_user.id, -bet, 'cash')
-            await message.answer(f"🎲 Твой бросок: {user_roll}\n🤖 Бросок бота: {bot_roll}\n\n❌ Ты проиграл {bet:,}€")
+            text = (
+                "🎲 **КОСТИ** 🎲\n"
+                "╔════════════════════════════╗\n"
+                f"║  🎲 Твой бросок: {user_roll}         ║\n"
+                f"║  🤖 Бросок бота: {bot_roll}         ║\n"
+                "║ ───────────────────────── ║\n"
+                f"║  ❌ Ты проиграл {bet:,} €       ║\n"
+                "╚════════════════════════════╝"
+            )
+            await message.answer(text)
         else:
-            await message.answer(f"🎲 Твой бросок: {user_roll}\n🤖 Бросок бота: {bot_roll}\n\n🤝 Ничья! Ставка возвращена")
-    except ValueError:
-        await message.answer("❌ Введи число. Пример: кости 5000")
+            text = (
+                "🎲 **КОСТИ** 🎲\n"
+                "╔════════════════════════════╗\n"
+                f"║  🎲 Твой бросок: {user_roll}         ║\n"
+                f"║  🤖 Бросок бота: {bot_roll}         ║\n"
+                "║ ───────────────────────── ║\n"
+                "║  🤝 Ничья! Ставка возвращена ║\n"
+                "╚════════════════════════════╝"
+            )
+            await message.answer(text)
+    except:
+        await message.answer("❌ Пример: кости 5000")
 
 @dp.message(lambda message: message.text.startswith("слоты"))
 async def slots_game(message: Message):
     try:
-        parts = message.text.split()
-        if len(parts) != 2:
-            await message.answer("❌ Пример: слоты 5000")
-            return
-        
-        bet = int(parts[1])
+        bet = int(message.text.split()[1])
         user = await get_user(message.from_user.id)
         
         if bet <= 0:
             await message.answer("❌ Ставка должна быть больше 0")
             return
         if user['cash'] < bet:
-            await message.answer(f"❌ Недостаточно денег! У тебя {user['cash']:,}€")
+            await message.answer(f"❌ Недостаточно денег! У тебя {user['cash']:,} €")
             return
         
         symbols = ['🍒', '🍋', '🍊', '💎', '7️⃣', '🎰']
@@ -210,29 +450,40 @@ async def slots_game(message: Message):
         
         if win > 0:
             await update_balance(message.from_user.id, win, 'cash')
-            await message.answer(f"🎰 {reel1} | {reel2} | {reel3}\n\n✅ Ты выиграл {win:,}€!")
+            text = (
+                "🎰 **СЛОТЫ** 🎰\n"
+                "╔════════════════════════════╗\n"
+                f"║  {reel1} │ {reel2} │ {reel3}              ║\n"
+                "║ ───────────────────────── ║\n"
+                f"║  ✅ Ты выиграл {win:,} €!       ║\n"
+                "╚════════════════════════════╝"
+            )
+            await message.answer(text)
         else:
             await update_balance(message.from_user.id, -bet, 'cash')
-            await message.answer(f"🎰 {reel1} | {reel2} | {reel3}\n\n❌ Ты проиграл {bet:,}€")
-    except ValueError:
+            text = (
+                "🎰 **СЛОТЫ** 🎰\n"
+                "╔════════════════════════════╗\n"
+                f"║  {reel1} │ {reel2} │ {reel3}              ║\n"
+                "║ ───────────────────────── ║\n"
+                f"║  ❌ Ты проиграл {bet:,} €        ║\n"
+                "╚════════════════════════════╝"
+            )
+            await message.answer(text)
+    except:
         await message.answer("❌ Пример: слоты 5000")
 
 @dp.message(lambda message: message.text.startswith("монетка"))
 async def coin_game(message: Message):
     try:
-        parts = message.text.split()
-        if len(parts) != 2:
-            await message.answer("❌ Пример: монетка 5000")
-            return
-        
-        bet = int(parts[1])
+        bet = int(message.text.split()[1])
         user = await get_user(message.from_user.id)
         
         if bet <= 0:
             await message.answer("❌ Ставка должна быть больше 0")
             return
         if user['cash'] < bet:
-            await message.answer(f"❌ Недостаточно денег! У тебя {user['cash']:,}€")
+            await message.answer(f"❌ Недостаточно денег! У тебя {user['cash']:,} €")
             return
         
         result = random.choice(['Орёл', 'Решка'])
@@ -241,11 +492,29 @@ async def coin_game(message: Message):
         if result == user_choice:
             win = bet * 2
             await update_balance(message.from_user.id, win, 'cash')
-            await message.answer(f"🪙 Выпал: {result}\n🎲 Твоя ставка: {user_choice}\n\n✅ Ты выиграл {win:,}€!")
+            text = (
+                "🪙 **МОНЕТКА** 🪙\n"
+                "╔════════════════════════════╗\n"
+                f"║  🪙 Выпал: {result}           ║\n"
+                f"║  🎲 Твоя ставка: {user_choice}    ║\n"
+                "║ ───────────────────────── ║\n"
+                f"║  ✅ Ты выиграл {win:,} €!       ║\n"
+                "╚════════════════════════════╝"
+            )
+            await message.answer(text)
         else:
             await update_balance(message.from_user.id, -bet, 'cash')
-            await message.answer(f"🪙 Выпал: {result}\n🎲 Твоя ставка: {user_choice}\n\n❌ Ты проиграл {bet:,}€")
-    except ValueError:
+            text = (
+                "🪙 **МОНЕТКА** 🪙\n"
+                "╔════════════════════════════╗\n"
+                f"║  🪙 Выпал: {result}           ║\n"
+                f"║  🎲 Твоя ставка: {user_choice}    ║\n"
+                "║ ───────────────────────── ║\n"
+                f"║  ❌ Ты проиграл {bet:,} €        ║\n"
+                "╚════════════════════════════╝"
+            )
+            await message.answer(text)
+    except:
         await message.answer("❌ Пример: монетка 5000")
 
 # ========== ТОП ==========
@@ -256,31 +525,39 @@ async def top(message: Message):
         await message.answer("❌ Топ пуст")
         return
     
-    text = "🏆 ТОП-10 БОГАЧЕЙ 🏆\n\n"
+    text = "🏆 **ТОП-10 БОГАЧЕЙ** 🏆\n╔════════════════════════════╗\n"
     for i, user in enumerate(top_users, 1):
-        text += f"{i}. {user['name']} — {user['total']:,}€\n"
+        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "📌"
+        text += f"║ {medal} {i}. {user['name'][:15]} │ {user['total']:,} €\n"
+    text += "╚════════════════════════════╝"
     await message.answer(text)
 
 # ========== ПОМОЩЬ ==========
 @dp.message(lambda message: message.text == "❓ Помощь")
 async def help_cmd(message: Message):
-    await message.answer(
-        "🎮 **YumaBot - Помощь** 🎮\n\n"
-        "👤 Мой профиль - информация о тебе\n"
-        "💰 Мой баланс - твои деньги\n"
-        "💼 Работать - заработать деньги и опыт\n"
-        "🏦 Положить в банк - сохранить деньги\n"
-        "🏦 Снять с банка - забрать деньги\n"
-        "⚡ Моя энергия - текущий уровень энергии\n"
-        "🎮 Игры - казино и азарт\n"
-        "  • кости [сумма] - игра в кости\n"
-        "  • слоты [сумма] - слоты\n"
-        "  • монетка [сумма] - орёл/решка\n"
-        "🏆 Топ игроков - таблица лидеров\n\n"
+    text = (
+        "🎮 **YUMA BOT - ПОМОЩЬ** 🎮\n"
+        "╔══════════════════════════════════════╗\n"
+        "║  👤 **Мой профиль** — твоя статистика  ║\n"
+        "║  💰 **Мой баланс** — твои деньги       ║\n"
+        "║  💼 **Работать** — заработать деньги   ║\n"
+        "║  🏦 **Банк** — сохранить/забрать       ║\n"
+        "║  ⚡ **Моя энергия** — запас сил        ║\n"
+        "║  🎮 **Игры** — испытать удачу          ║\n"
+        "║  🏆 **Топ игроков** — лучшие игроки    ║\n"
+        "╠══════════════════════════════════════╣\n"
+        "║  📝 **Команды:**                        ║\n"
+        "║  • кости [сумма] — игра в кости        ║\n"
+        "║  • слоты [сумма] — слоты               ║\n"
+        "║  • монетка [сумма] — орёл/решка        ║\n"
+        "║  • положить [сумма] — в банк           ║\n"
+        "║  • снять [сумма] — из банка            ║\n"
+        "╚══════════════════════════════════════╝\n"
         "⚡ Энергия восстанавливается на 5 каждые 30 минут"
     )
+    await message.answer(text)
 
-# ========== АДМИН КОМАНДЫ (ТОЛЬКО ТЫ) ==========
+# ========== АДМИН ==========
 @dp.message(lambda message: message.text.startswith("выдать") and message.from_user.id == ADMIN_ID)
 async def admin_give(message: Message):
     try:
@@ -292,7 +569,7 @@ async def admin_give(message: Message):
         user_id = int(parts[1])
         amount = int(parts[2])
         await update_balance(user_id, amount, 'cash')
-        await message.answer(f"✅ Выдано {amount:,}€ пользователю {user_id}")
+        await message.answer(f"✅ Выдано {amount:,} € пользователю {user_id}")
     except:
         await message.answer("❌ Ошибка. Пример: выдать ID сумма")
 
@@ -316,7 +593,7 @@ async def admin_energy(message: Message):
 # ========== ФОНОВОЕ ВОССТАНОВЛЕНИЕ ==========
 async def restore_energy_background():
     while True:
-        await asyncio.sleep(1800)  # 30 минут
+        await asyncio.sleep(1800)
         from database import pool
         async with pool.acquire() as conn:
             await conn.execute("UPDATE users SET energy = LEAST(energy + 5, 100)")
@@ -325,8 +602,8 @@ async def restore_energy_background():
 async def main():
     await init_db()
     asyncio.create_task(restore_energy_background())
-    print("🚀 YumaBot запущен! Все команды на русском, без слешей")
-    print(f"👑 Админ: {ADMIN_ID}")
+    print("🚀 YUMA BOT ЗАПУЩЕН!")
+    print(f"👑 АДМИН: {ADMIN_ID}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
