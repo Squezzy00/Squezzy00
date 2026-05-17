@@ -17,7 +17,9 @@ async def init_db():
                 exp BIGINT DEFAULT 0,
                 level INT DEFAULT 1,
                 status TEXT DEFAULT 'Новичок',
-                work_time BIGINT DEFAULT 0
+                work_time BIGINT DEFAULT 0,
+                work_streak INT DEFAULT 0,
+                last_work_hour INT DEFAULT 0
             )
         ''')
         print("✅ База данных подключена")
@@ -44,9 +46,21 @@ async def update_energy(user_id, delta):
     async with pool.acquire() as conn:
         await conn.execute("UPDATE users SET energy = energy + $1 WHERE user_id = $2", delta, user_id)
 
-async def update_work_time(user_id):
+async def update_work_streak(user_id, streak):
     async with pool.acquire() as conn:
-        await conn.execute("UPDATE users SET work_time = EXTRACT(EPOCH FROM NOW())::BIGINT WHERE user_id = $1", user_id)
+        await conn.execute("UPDATE users SET work_streak = $1 WHERE user_id = $2", streak, user_id)
+
+async def update_last_work_hour(user_id, hour):
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE users SET last_work_hour = $1 WHERE user_id = $2", hour, user_id)
+
+async def update_exp(user_id, exp):
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE users SET exp = $1 WHERE user_id = $2", exp, user_id)
+
+async def update_level(user_id, level, exp):
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE users SET level = $1, exp = $2 WHERE user_id = $3", level, exp, user_id)
 
 async def get_top_users(limit=10):
     async with pool.acquire() as conn:
