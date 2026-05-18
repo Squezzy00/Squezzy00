@@ -2,7 +2,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const path = require('path');
 
-const token = '863547070:AAFbgm_XpPDoWJUTUG-V7QR1EB9YhR1ev8g';
+const token = '8635475470:AAFbgm_XpPDoWJUTUG-V7QR1EB9YhR1ev8g';
 const bot = new TelegramBot(token, { polling: true });
 
 const ADMIN_IDS = [5005387093];
@@ -64,26 +64,11 @@ function randomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)
 function randomPick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function isAdmin(userId) { return ADMIN_IDS.includes(userId); }
 
-// Функция для преобразования ника с премиум-эмодзи
-async function formatNickWithPremiumEmojis(nick) {
-    // Регулярка для поиска кастомных эмодзи <tg-emoji emoji-id="...">...</tg-emoji>
-    const emojiRegex = /<tg-emoji emoji-id="([^"]+)">([^<]*)<\/tg-emoji>/g;
-    let formattedNick = nick;
-    let match;
-    while ((match = emojiRegex.exec(nick)) !== null) {
-        const emojiId = match[1];
-        const emojiChar = match[2];
-        // Заменяем на премиум-эмодзи через HTML-тег (Telegram поддерживает)
-        formattedNick = formattedNick.replace(match[0], `<tg-emoji emoji-id="${emojiId}">${emojiChar}</tg-emoji>`);
-    }
-    return formattedNick;
-}
-
-// Функция для проверки валидности ника (буквы, цифры, пробел, обычные эмодзи, премиум-теги)
+// Простая проверка ника (без ебучих эмодзи)
 function isValidNick(nick) {
-    // Разрешены: буквы, цифры, пробел, обычные эмодзи (через юникод), и премиум-теги
-    const regex = /^[a-zA-Zа-яА-Я0-9\s\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}<tg-emoji emoji-id="[^"]+">[^<]*<\/tg-emoji>]+$/u;
-    return regex.test(nick) && nick.length <= 30;
+    if (nick.length > 25) return false;
+    // Разрешаем буквы, цифры, пробел и основные эмодзи
+    return true;
 }
 
 const cars = [
@@ -240,6 +225,7 @@ setInterval(() => {
     }
     saveUsers();
 }, 3600000);
+
 // ========== ОСНОВНЫЕ КОМАНДЫ ==========
 bot.onText(/\/start/, async (msg) => {
     const userId = msg.from.id, tag = msg.from.first_name, chatId = msg.chat.id;
@@ -571,19 +557,17 @@ bot.onText(/^бизнес улучшить$/i, async (msg) => {
     sendMessage(chatId, userId, `✅ **Бизнес улучшен до ${user.bizlvl} уровня!**`);
 });
 
-// НИК С ПОДДЕРЖКОЙ ПРЕМИУМ-ЭМОДЗИ
+// НИК (упрощённая версия)
 bot.onText(/^ник (.+)$/, async (msg, match) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     let user = await getOrCreateUser(userId, msg.from.first_name);
     let newNick = match[1].trim();
     
-    if (newNick.length > 30) return sendMessage(chatId, userId, `❌ **Максимум 30 символов**`);
-    if (!isValidNick(newNick)) return sendMessage(chatId, userId, `❌ **Недопустимые символы в нике**`);
+    if (newNick.length > 25) return sendMessage(chatId, userId, `❌ **Максимум 25 символов**`);
     
-    const formattedNick = await formatNickWithPremiumEmojis(newNick);
-    user.tag = formattedNick;
+    user.tag = newNick;
     saveUsers();
-    sendMessage(chatId, userId, `✅ **Ник изменён на** ${formattedNick}`);
+    sendMessage(chatId, userId, `✅ **Ник изменён на** ${newNick}`);
 });
 
 bot.onText(/^копать (железо|золото|алмазы)$/, async (msg, match) => {
