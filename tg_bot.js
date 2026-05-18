@@ -2,23 +2,18 @@ const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const path = require('path');
 
-// ТОКЕН
 const token = '8635475470:AAFbgm_XpPDoWJUTUG-V7QR1EB9YhR1ev8g';
 const bot = new TelegramBot(token, { polling: true });
 
-// АДМИНЫ (ID Telegram)
 const ADMIN_IDS = [5005387093];
 
-// ПУТИ К ФАЙЛАМ
 const USERS_FILE = path.join(__dirname, 'database', 'users.json');
 const SETTINGS_FILE = path.join(__dirname, 'database', 'settings.json');
 
-// СОЗДАЕМ ПАПКУ database ЕСЛИ НЕТ
 if (!fs.existsSync(path.join(__dirname, 'database'))) {
     fs.mkdirSync(path.join(__dirname, 'database'));
 }
 
-// ЗАГРУЗКА ПОЛЬЗОВАТЕЛЕЙ
 let users = [];
 try {
     const data = fs.readFileSync(USERS_FILE, 'utf8');
@@ -29,7 +24,6 @@ try {
     fs.writeFileSync(USERS_FILE, JSON.stringify([], null, '\t'));
 }
 
-// ЗАГРУЗКА НАСТРОЕК
 let config = {
     ownerid: "5005387093",
     promolimit: 0,
@@ -43,14 +37,12 @@ try {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(config, null, '\t'));
 }
 
-// СОХРАНЕНИЕ
 function saveUsers() {
     fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, '\t'));
     console.log(`💾 Сохранено ${users.length} игроков`);
 }
 function saveConfig() { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(config, null, '\t')); }
 
-// HTTP ЗАГЛУШКА ДЛЯ RENDER
 const http = require('http');
 const server = http.createServer((req, res) => {
     res.writeHead(200);
@@ -61,7 +53,6 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Health check server running on port ${PORT}`);
 });
 
-// ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 function formatNumber(num) {
     if (num >= 1e12) return (num / 1e12).toFixed(1) + 'трлн';
     if (num >= 1e9) return (num / 1e9).toFixed(1) + 'млрд';
@@ -73,7 +64,6 @@ function randomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)
 function randomPick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function isAdmin(userId) { return ADMIN_IDS.includes(userId); }
 
-// ========== ДАННЫЕ ==========
 const cars = [
     { name: 'Самокат', cost: 500, id: 1 }, { name: 'Велосипед', cost: 2500, id: 2 },
     { name: 'Гироскутер', cost: 5000, id: 3 }, { name: 'Сегвей', cost: 7500, id: 4 },
@@ -169,10 +159,8 @@ const worksList = [
 
 let btcPrice = 6000;
 
-// ========== ФУНКЦИИ ПОЛЬЗОВАТЕЛЕЙ ==========
 function getUser(userId) { return users.find(u => u.id == userId); }
 function getUserByUid(uid) { return users.find(u => u.uid == uid); }
-function getUserByTag(tag) { return users.find(u => u.tag == tag); }
 
 async function getOrCreateUser(userId, tag) {
     let user = getUser(userId);
@@ -205,7 +193,6 @@ async function sendMessage(chatId, userId, text, options = {}) {
     return bot.sendMessage(userId, text, options);
 }
 
-// ========== КУРС БИТКОИНА ==========
 async function updateBtcPrice() {
     try {
         const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
@@ -216,7 +203,6 @@ async function updateBtcPrice() {
 setInterval(updateBtcPrice, 60000);
 updateBtcPrice();
 
-// ========== ФОНОВЫЕ ЗАДАЧИ ==========
 setInterval(() => {
     for (const user of users) {
         if (user.ban && user.ban.until && Date.now() > user.ban.until) user.ban = null;
@@ -233,56 +219,52 @@ setInterval(() => {
     saveUsers();
 }, 3600000);
 
-// ========== СТАРТ ==========
 bot.onText(/\/start/, async (msg) => {
     const userId = msg.from.id, tag = msg.from.first_name, chatId = msg.chat.id;
     await getOrCreateUser(userId, tag);
-    bot.sendMessage(chatId, `🤖 Добро пожаловать в YumaBot, ${tag}!\n📚 Отправь "помощь" для команд\n💰 Стартовый баланс: 5000$`);
+    bot.sendMessage(chatId, `🤖 Добро пожаловать в YumaBot, ${tag}!\n📚 "помощь" - команды\n💰 Старт: 5000$`);
 });
 
 bot.onText(/^(помощь|команды|help)$/i, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     await getOrCreateUser(userId, msg.from.first_name);
     sendMessage(chatId, userId, 
-        `📚 **ЮМА БОТ - КОМАНДЫ**\n\n👤 профиль/проф/я - статистика\n💰 баланс/б - деньги\n💼 работа - заработать\n🏪 бизнес/биз - бизнес\n🔋 ферма - криптоферма\n🛒 магазин - покупки\n🏆 топ - топ игроков\n🔑 бонус - ежедневно\n💽 курс - курс BTC\n\n🚗 машины 🛥 яхты 🛩 самолеты 🚁 вертолеты\n🏠 дома 🏢 квартиры 📱 телефоны 🐼 питомцы 🔋 фермы\n\n💸 банк [сумма] - положить\n💸 банк снять [сумма] - снять\n🤝 передать [id] [сумма]\n✏️ ник [ник]\n⛏ копать [железо/золото/алмазы]`);
+        `📚 **КОМАНДЫ**\n👤 профиль/проф/я - статистика\n💰 баланс/б - деньги\n💼 работа - заработать\n🏪 бизнес/биз - бизнес\n🔋 ферма - криптоферма\n🛒 магазин - покупки\n🏆 топ\n🔑 бонус\n💽 курс\n\n🚗 машины 🛥 яхты 🛩 самолеты 🚁 вертолеты\n🏠 дома 🏢 квартиры 📱 телефоны 🐼 питомцы\n\n💸 банк [сумма]\n💸 банк снять [сумма]\n🤝 передать [id] [сумма]\n✏️ ник [ник]\n⛏ копать [железо/золото/алмазы]`);
 });
 
-// ПРОФИЛЬ
 bot.onText(/^(профиль|проф|я)$/i, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     const user = await getOrCreateUser(userId, msg.from.first_name);
-    if (user.ban) return sendMessage(chatId, userId, `⛔ Ты забанен до ${new Date(user.ban.until).toLocaleString()} по причине: ${user.ban.reason}`);
-    let text = `🔎 **ТВОЙ ПРОФИЛЬ**\n🆔 ID: ${user.uid}\n📛 Ник: ${user.tag}\n💰 Денег: ${user.balance.toLocaleString()}$\n💳 В банке: ${user.bank.toLocaleString()}$\n💽 Биткоинов: ${user.btc}₿\n👑 Рейтинг: ${user.rating}\n🌟 Уровень: ${user.level} (${user.opit}/24 опыта)\n⚡ Энергия: ${user.energy}/10\n📅 Регистрация: ${user.regDate}\n\n🔐 **Имущество:**\n`;
-    if (user.transport.car) text += `🚗 Машина: ${cars.find(c => c.id === user.transport.car)?.name}\n`;
-    if (user.transport.yacht) text += `🛥 Яхта: ${yachts.find(y => y.id === user.transport.yacht)?.name}\n`;
-    if (user.transport.airplane) text += `🛩 Самолёт: ${airplanes.find(a => a.id === user.transport.airplane)?.name}\n`;
-    if (user.transport.helicopter) text += `🚁 Вертолёт: ${helicopters.find(h => h.id === user.transport.helicopter)?.name}\n`;
-    if (user.realty.home) text += `🏠 Дом: ${homes.find(h => h.id === user.realty.home)?.name}\n`;
-    if (user.realty.apartment) text += `🏢 Квартира: ${apartments.find(a => a.id === user.realty.apartment)?.name}\n`;
-    if (user.misc.phone) text += `📱 Телефон: ${phones.find(p => p.id === user.misc.phone)?.name}\n`;
-    if (user.misc.pet) text += `🐼 Питомец: ${pets.find(p => p.id === user.misc.pet)?.name} (ур. ${user.pet.lvl})\n`;
-    if (user.misc.farm) text += `🔋 Ферма: ${farms.find(f => f.id === user.misc.farm)?.name} x${user.farms}\n`;
-    if (user.business) text += `🏪 Бизнес: ${businesses.find(b => b.id === user.business)?.name}\n`;
+    if (user.ban) return sendMessage(chatId, userId, `⛔ Ты забанен до ${new Date(user.ban.until).toLocaleString()} (${user.ban.reason})`);
+    let text = `🔎 **ПРОФИЛЬ**\n🆔 ID: ${user.uid}\n📛 ${user.tag}\n💰 ${user.balance.toLocaleString()}$\n🏦 ${user.bank.toLocaleString()}$\n💽 ${user.btc}₿\n👑 ${user.rating}\n🌟 ${user.level} (${user.opit}/24 опыта)\n⚡ ${user.energy}/10\n📅 ${user.regDate}\n\n🔐 **Имущество:**\n`;
+    if (user.transport.car) text += `🚗 ${cars.find(c => c.id === user.transport.car)?.name}\n`;
+    if (user.transport.yacht) text += `🛥 ${yachts.find(y => y.id === user.transport.yacht)?.name}\n`;
+    if (user.transport.airplane) text += `🛩 ${airplanes.find(a => a.id === user.transport.airplane)?.name}\n`;
+    if (user.transport.helicopter) text += `🚁 ${helicopters.find(h => h.id === user.transport.helicopter)?.name}\n`;
+    if (user.realty.home) text += `🏠 ${homes.find(h => h.id === user.realty.home)?.name}\n`;
+    if (user.realty.apartment) text += `🏢 ${apartments.find(a => a.id === user.realty.apartment)?.name}\n`;
+    if (user.misc.phone) text += `📱 ${phones.find(p => p.id === user.misc.phone)?.name}\n`;
+    if (user.misc.pet) text += `🐼 ${pets.find(p => p.id === user.misc.pet)?.name} (ур.${user.pet.lvl})\n`;
+    if (user.misc.farm) text += `🔋 ${farms.find(f => f.id === user.misc.farm)?.name} x${user.farms}\n`;
+    if (user.business) text += `🏪 ${businesses.find(b => b.id === user.business)?.name}\n`;
     sendMessage(chatId, userId, text);
 });
 
-// БАЛАНС
 bot.onText(/^(баланс|б)$/i, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     const user = await getOrCreateUser(userId, msg.from.first_name);
     if (user.ban) return sendMessage(chatId, userId, `⛔ Ты забанен`);
-    sendMessage(chatId, userId, `💰 **БАЛАНС**\n💵 Наличные: ${user.balance.toLocaleString()}$\n🏦 В банке: ${user.bank.toLocaleString()}$\n💽 Биткоины: ${user.btc}₿`);
+    sendMessage(chatId, userId, `💰 **БАЛАНС**\n💵 ${user.balance.toLocaleString()}$\n🏦 ${user.bank.toLocaleString()}$\n💽 ${user.btc}₿`);
 });
 
-// РАБОТА
-bot.onText(/^работа$/, async (msg) => {
+bot.onText(/^(работа|работать)$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     let user = await getOrCreateUser(userId, msg.from.first_name);
     if (user.ban) return sendMessage(chatId, userId, `⛔ Ты забанен`);
     if (!user.work) {
         let text = `📋 **ПРОФЕССИИ**\n`;
-        for (const w of worksList) text += `${user.level >= w.requiredLevel ? '✅' : '🔒'} ${w.id}. ${w.name} — ${w.min.toLocaleString()}-${w.max.toLocaleString()}$ (${user.level >= w.requiredLevel ? 'доступна' : `треб ${w.requiredLevel} ур`})\n`;
-        text += `\n📝 "работа [номер]"`;
+        for (const w of worksList) text += `${user.level >= w.requiredLevel ? '✅' : '🔒'} ${w.id}. ${w.name} — ${w.min.toLocaleString()}-${w.max.toLocaleString()}$\n`;
+        text += `\n"работа [номер]"`;
         return sendMessage(chatId, userId, text);
     }
     if (user.timers.hasWorked) return sendMessage(chatId, userId, `⏳ Отдых 10 минут`);
@@ -302,9 +284,9 @@ bot.onText(/^работа (\d+)$/, async (msg, match) => {
     if (!work) return sendMessage(chatId, userId, '❌ Неверный номер');
     if (user.level < work.requiredLevel) return sendMessage(chatId, userId, `❌ Нужен ${work.requiredLevel} уровень`);
     user.work = workId; saveUsers();
-    sendMessage(chatId, userId, `✅ Ты устроился на "${work.name}"! Теперь "работа"`);
+    sendMessage(chatId, userId, `✅ Устроен на "${work.name}"! Теперь "работа"`);
 });
-bot.onText(/^уволиться$/, async (msg) => {
+bot.onText(/^(уволиться|уволится)$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     let user = await getOrCreateUser(userId, msg.from.first_name);
     if (!user.work) return sendMessage(chatId, userId, '❌ Ты не работаешь');
@@ -312,7 +294,6 @@ bot.onText(/^уволиться$/, async (msg) => {
     sendMessage(chatId, userId, `✅ Ты уволился`);
 });
 
-// ========== БАНК ==========
 bot.onText(/^банк$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     const user = await getOrCreateUser(userId, msg.from.first_name);
@@ -322,19 +303,18 @@ bot.onText(/^банк (\d+)$/, async (msg, match) => {
     const userId = msg.from.id, chatId = msg.chat.id, amount = parseInt(match[1]);
     let user = await getOrCreateUser(userId, msg.from.first_name);
     if (user.ban) return;
-    if (amount <= 0 || amount > user.balance) return sendMessage(chatId, userId, '❌ Ошибка суммы');
+    if (amount <= 0 || amount > user.balance) return sendMessage(chatId, userId, '❌ Ошибка');
     user.balance -= amount; user.bank += amount; saveUsers();
     sendMessage(chatId, userId, `✅ +${amount.toLocaleString()}$ в банк`);
 });
 bot.onText(/^банк снять (\d+)$/, async (msg, match) => {
     const userId = msg.from.id, chatId = msg.chat.id, amount = parseInt(match[1]);
     let user = await getOrCreateUser(userId, msg.from.first_name);
-    if (amount <= 0 || amount > user.bank) return sendMessage(chatId, userId, '❌ Ошибка суммы');
+    if (amount <= 0 || amount > user.bank) return sendMessage(chatId, userId, '❌ Ошибка');
     user.bank -= amount; user.balance += amount; saveUsers();
     sendMessage(chatId, userId, `✅ -${amount.toLocaleString()}$ из банка`);
 });
 
-// ПЕРЕДАЧА
 bot.onText(/^передать (\d+) (\d+)$/, async (msg, match) => {
     const userId = msg.from.id, chatId = msg.chat.id, targetUid = parseInt(match[1]), amount = parseInt(match[2]);
     let user = await getOrCreateUser(userId, msg.from.first_name);
@@ -346,7 +326,6 @@ bot.onText(/^передать (\d+) (\d+)$/, async (msg, match) => {
     if (target.notifications) bot.sendMessage(target.id, `📩 ${user.tag} перевёл тебе ${amount.toLocaleString()}$`);
 });
 
-// ТОП
 bot.onText(/^топ$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     const sorted = [...users].sort((a,b) => b.rating - a.rating).slice(0,10);
@@ -355,34 +334,36 @@ bot.onText(/^топ$/, async (msg) => {
     sendMessage(chatId, userId, text);
 });
 
-// БОНУС
 bot.onText(/^бонус$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     let user = await getOrCreateUser(userId, msg.from.first_name);
     if (user.timers.bonus) return sendMessage(chatId, userId, '⏳ Раз в 24 часа');
-    const prize = randomPick([{text:'50.000$',a:()=>user.balance+=50000},{text:'1000₿',a:()=>user.btc+=1000},{text:'5 рейтинга',a:()=>user.rating+=5},{text:'1 рейтинг',a:()=>user.rating+=1},{text:'1.000.000$ в банк',a:()=>user.bank+=1000000},{text:'5.000.000$ в банк',a:()=>user.bank+=5000000}]);
+    const prizes = [
+        {text:'50.000$',a:()=>user.balance+=50000},{text:'1.000₿',a:()=>user.btc+=1000},{text:'5 рейтинга',a:()=>user.rating+=5},
+        {text:'1 рейтинг',a:()=>user.rating+=1},{text:'1.000.000$ в банк',a:()=>user.bank+=1000000},{text:'5.000.000$ в банк',a:()=>user.bank+=5000000}
+    ];
+    const prize = randomPick(prizes);
     prize.a(); user.timers.bonus = true; saveUsers();
     setTimeout(() => { user.timers.bonus = false; saveUsers(); }, 86400000);
     sendMessage(chatId, userId, `🎁 **БОНУС**\n✅ +${prize.text}`);
 });
 
-// КУРС
 bot.onText(/^курс$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     sendMessage(chatId, userId, `💽 **КУРС БИТКОИНА**\n1₿ = ${btcPrice.toLocaleString()}$`);
 });
 
-// ========== МАГАЗИН ==========
 bot.onText(/^магазин$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     sendMessage(chatId, userId, `🛒 **МАГАЗИН**\n🚗 машины\n🛥 яхты\n🛩 самолеты\n🚁 вертолеты\n🏠 дома\n🏢 квартиры\n📱 телефоны\n🐼 питомцы\n🔋 фермы\n\n💎 рейтинг [кол-во]\n💽 биткоин [кол-во]`);
 });
+
 function makeShopHandler(cmd, list, typeName, fieldPath) {
     bot.onText(new RegExp(`^${cmd}$`), async (msg) => {
         const userId = msg.from.id, chatId = msg.chat.id;
         let text = `🛒 **${typeName}**\n`;
         for (const item of list) text += `${item.id}. ${item.name} — ${item.cost.toLocaleString()}$\n`;
-        text += `\n📝 "купить ${cmd} [номер]"`;
+        text += `\n"купить ${cmd} [номер]"`;
         sendMessage(chatId, userId, text);
     });
     bot.onText(new RegExp(`^купить ${cmd} (\\d+)$`), async (msg, match) => {
@@ -399,7 +380,7 @@ function makeShopHandler(cmd, list, typeName, fieldPath) {
         user.balance -= item.cost;
         current[keys[keys.length-1]] = item.id;
         saveUsers();
-        sendMessage(chatId, userId, `✅ Куплено "${item.name}" за ${item.cost.toLocaleString()}$!`);
+        sendMessage(chatId, userId, `✅ Куплено "${item.name}"!`);
     });
 }
 makeShopHandler('машины', cars, 'МАШИНЫ', 'transport.car');
@@ -409,12 +390,12 @@ makeShopHandler('вертолеты', helicopters, 'ВЕРТОЛЁТЫ', 'transp
 makeShopHandler('дома', homes, 'ДОМА', 'realty.home');
 makeShopHandler('квартиры', apartments, 'КВАРТИРЫ', 'realty.apartment');
 makeShopHandler('телефоны', phones, 'ТЕЛЕФОНЫ', 'misc.phone');
-// Питомцы
+
 bot.onText(/^питомцы$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     let text = `🐼 **ПИТОМЦЫ**\n`;
     for (const p of pets) text += `${p.id}. ${p.name} — ${p.cost.toLocaleString()}$\n`;
-    text += `\n📝 "купить питомца [номер]"\n"питомец поход"\n"питомец улучшить"`;
+    text += `\n"купить питомца [номер]"\n"питомец поход"\n"питомец улучшить"`;
     sendMessage(chatId, userId, text);
 });
 bot.onText(/^купить питомца (\d+)$/, async (msg, match) => {
@@ -425,13 +406,13 @@ bot.onText(/^купить питомца (\d+)$/, async (msg, match) => {
     if (user.misc.pet) return sendMessage(chatId, userId, '❌ Уже есть питомец');
     if (user.balance < pet.cost) return sendMessage(chatId, userId, `❌ Нужно ${pet.cost.toLocaleString()}$`);
     user.balance -= pet.cost; user.misc.pet = petId; saveUsers();
-    sendMessage(chatId, userId, `✅ Куплен питомец "${pet.name}"!`);
+    sendMessage(chatId, userId, `✅ Куплен "${pet.name}"!`);
 });
 bot.onText(/^питомец поход$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     let user = await getOrCreateUser(userId, msg.from.first_name);
     if (!user.misc.pet) return sendMessage(chatId, userId, '❌ Нет питомца');
-    if (user.timers.poxod) return sendMessage(chatId, userId, '⏳ Питомец устал, час отдыха');
+    if (user.timers.poxod) return sendMessage(chatId, userId, '⏳ Питомец устал');
     const cash = randomInt(736, 2879);
     user.balance += cash; user.timers.poxod = true; saveUsers();
     setTimeout(() => { user.timers.poxod = false; saveUsers(); }, 3600000);
@@ -447,12 +428,12 @@ bot.onText(/^питомец улучшить$/, async (msg) => {
     user.balance -= cost; user.pet.lvl++; saveUsers();
     sendMessage(chatId, userId, `✅ Питомец улучшен до ${user.pet.lvl} уровня!`);
 });
-// Фермы
+
 bot.onText(/^фермы$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     let text = `🔋 **ФЕРМЫ**\n`;
     for (const f of farms) text += `${f.id}. ${f.name} — ${f.cost.toLocaleString()}$ (${f.earn}₿/час)\n`;
-    text += `\n📝 "купить ферму [номер] [кол-во]"`;
+    text += `\n"купить ферму [номер] [кол-во]"`;
     sendMessage(chatId, userId, text);
 });
 bot.onText(/^купить ферму (\d+)(?:\s+(\d+))?$/, async (msg, match) => {
@@ -466,7 +447,7 @@ bot.onText(/^купить ферму (\d+)(?:\s+(\d+))?$/, async (msg, match) =>
     if (user.misc.farm !== farmId) user.misc.farm = farmId;
     user.farms += amount;
     saveUsers();
-    sendMessage(chatId, userId, `✅ Куплено ${amount} шт. ${farm.name} за ${total.toLocaleString()}$`);
+    sendMessage(chatId, userId, `✅ Куплено ${amount} шт. ${farm.name}!`);
 });
 bot.onText(/^ферма$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
@@ -478,24 +459,23 @@ bot.onText(/^ферма$/, async (msg) => {
 bot.onText(/^ферма собрать$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     let user = await getOrCreateUser(userId, msg.from.first_name);
-    if (!user.misc.farm || user.farm_btc <= 0) return sendMessage(chatId, userId, '❌ Нет BTC на ферме');
+    if (!user.misc.farm || user.farm_btc <= 0) return sendMessage(chatId, userId, '❌ Нет BTC');
     const btc = user.farm_btc;
     user.btc += btc; user.farm_btc = 0; saveUsers();
-    sendMessage(chatId, userId, `✅ Собрано ${btc}₿ с ферм!`);
+    sendMessage(chatId, userId, `✅ Собрано ${btc}₿!`);
 });
 
-// ========== БИЗНЕС ==========
-bot.onText(/^(бизнес|биз)$/, async (msg) => {
+bot.onText(/^(бизнес|биз|бизнесы)$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     let user = await getOrCreateUser(userId, msg.from.first_name);
     if (!user.business) {
         let text = `🏪 **БИЗНЕСЫ**\n`;
         for (const b of businesses) text += `${b.id}. ${b.icon} ${b.name} — ${b.cost.toLocaleString()}$ (${b.earn.toLocaleString()}$/час)\n`;
-        text += `\n📝 "купить бизнес [номер]"`;
+        text += `\n"купить бизнес [номер]"`;
         return sendMessage(chatId, userId, text);
     }
     const biz = businesses.find(b => b.id === user.business);
-    sendMessage(chatId, userId, `🏪 **${biz.icon} ${biz.name}**\n💰 Прибыль: ${biz.earn * (user.bizlvl+1).toLocaleString()}$/час\n💳 На счету: ${user.biz.toLocaleString()}$\n🌟 Уровень: ${user.bizlvl}\n\n"бизнес снять" / "бизнес улучшить"`);
+    sendMessage(chatId, userId, `🏪 **${biz.icon} ${biz.name}**\n💰 Прибыль: ${biz.earn * (user.bizlvl+1).toLocaleString()}$/час\n💳 На счету: ${user.biz.toLocaleString()}$\n🌟 Уровень: ${user.bizlvl}\n\n"бизнес снять"\n"бизнес улучшить"`);
 });
 bot.onText(/^купить бизнес (\d+)$/, async (msg, match) => {
     const userId = msg.from.id, chatId = msg.chat.id, bizId = parseInt(match[1]);
@@ -505,7 +485,7 @@ bot.onText(/^купить бизнес (\d+)$/, async (msg, match) => {
     if (user.business) return sendMessage(chatId, userId, '❌ Уже есть бизнес');
     if (user.balance < biz.cost) return sendMessage(chatId, userId, `❌ Нужно ${biz.cost.toLocaleString()}$`);
     user.balance -= biz.cost; user.business = bizId; saveUsers();
-    sendMessage(chatId, userId, `✅ Куплен бизнес "${biz.name}"!`);
+    sendMessage(chatId, userId, `✅ Куплен "${biz.name}"!`);
 });
 bot.onText(/^бизнес снять$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
@@ -513,7 +493,7 @@ bot.onText(/^бизнес снять$/, async (msg) => {
     if (!user.business || user.biz <= 0) return sendMessage(chatId, userId, '❌ Нет денег');
     const amount = user.biz;
     user.balance += amount; user.biz = 0; saveUsers();
-    sendMessage(chatId, userId, `✅ Снято ${amount.toLocaleString()}$ с бизнеса`);
+    sendMessage(chatId, userId, `✅ Снято ${amount.toLocaleString()}$`);
 });
 bot.onText(/^бизнес улучшить$/, async (msg) => {
     const userId = msg.from.id, chatId = msg.chat.id;
@@ -526,7 +506,6 @@ bot.onText(/^бизнес улучшить$/, async (msg) => {
     sendMessage(chatId, userId, `✅ Бизнес улучшен до ${user.bizlvl} уровня!`);
 });
 
-// НИК
 bot.onText(/^ник (.+)$/, async (msg, match) => {
     const userId = msg.from.id, chatId = msg.chat.id, newNick = match[1].trim();
     let user = await getOrCreateUser(userId, msg.from.first_name);
@@ -535,7 +514,6 @@ bot.onText(/^ник (.+)$/, async (msg, match) => {
     sendMessage(chatId, userId, `✅ Ник изменён на "${newNick}"`);
 });
 
-// КОПКА РЕСУРСОВ
 bot.onText(/^копать (железо|золото|алмазы)$/, async (msg, match) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     let user = await getOrCreateUser(userId, msg.from.first_name);
@@ -545,13 +523,12 @@ bot.onText(/^копать (железо|золото|алмазы)$/, async (msg
     if (type === 'железо') { reqExp = 0; found = randomInt(16, 97); expGain = 1; amountField = 'zhelezo'; }
     else if (type === 'золото') { reqExp = 300; found = randomInt(5, 35); expGain = 5; amountField = 'zoloto'; }
     else { reqExp = 3000; found = randomInt(3, 26); expGain = 10; amountField = 'almaz'; }
-    if (user.opit < reqExp) return sendMessage(chatId, userId, `❌ Нужно ${reqExp} опыта для копки ${type}`);
-    if (user.energy < 1) return sendMessage(chatId, userId, '❌ Нет энергии! Жди 5 минут');
+    if (user.opit < reqExp) return sendMessage(chatId, userId, `❌ Нужно ${reqExp} опыта`);
+    if (user.energy < 1) return sendMessage(chatId, userId, '❌ Нет энергии!');
     user[amountField] += found; user.energy -= 1; user.opit += expGain; saveUsers();
-    sendMessage(chatId, userId, `⛏ Ты накопал ${found} ${type}! (+${expGain} опыта, энергия ${user.energy}/10)`);
+    sendMessage(chatId, userId, `⛏ +${found} ${type}! (+${expGain} опыта, энергия ${user.energy}/10)`);
 });
 
-// ПРОДАЖА
 bot.onText(/^продать (машину|яхту|самолет|вертолет|дом|квартиру|телефон|питомца|бизнес|ферму|железо|золото|алмазы)$/, async (msg, match) => {
     const userId = msg.from.id, chatId = msg.chat.id;
     let user = await getOrCreateUser(userId, msg.from.first_name);
@@ -570,28 +547,24 @@ bot.onText(/^продать (машину|яхту|самолет|вертоле
     else if (item === 'железо' && user.zhelezo>0) { price = user.zhelezo*15000; clear = () => user.zhelezo=0; }
     else if (item === 'золото' && user.zoloto>0) { price = user.zoloto*50000; clear = () => user.zoloto=0; }
     else if (item === 'алмазы' && user.almaz>0) { price = user.almaz*100000; clear = () => user.almaz=0; }
-    else return sendMessage(chatId, userId, `❌ Нет ${item} для продажи`);
+    else return sendMessage(chatId, userId, `❌ Нет ${item}`);
     user.balance += price; clear(); saveUsers();
     sendMessage(chatId, userId, `✅ Продано за ${price.toLocaleString()}$`);
 });
 
-// АНЕКДОТ
 bot.onText(/^анекдот$/, async (msg) => {
     const jokes = ['Разговаривают два американца...', 'Бывает, борешься за что-то...', '— А это точно поможет?'];
     sendMessage(msg.chat.id, msg.from.id, `📖 ${randomPick(jokes)}`);
 });
 
-// ========== АДМИН КОМАНДЫ ==========
-// ВЫДАТЬ
 bot.onText(/^выдать (\d+) (\d+)$/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     const target = getUserByUid(parseInt(match[1]));
     if (!target) return bot.sendMessage(msg.chat.id, '❌ Игрок не найден');
     target.balance += parseInt(match[2]); saveUsers();
     bot.sendMessage(msg.chat.id, `✅ Выдано ${parseInt(match[2]).toLocaleString()}$ игроку ${target.tag}`);
-    bot.sendMessage(target.id, `📩 Админ выдал тебе ${parseInt(match[2]).toLocaleString()}$`);
+    bot.sendMessage(target.id, `📩 Админ выдал ${parseInt(match[2]).toLocaleString()}$`);
 });
-// ЗАБРАТЬ
 bot.onText(/^забрать (\d+) (\d+)$/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     const target = getUserByUid(parseInt(match[1]));
@@ -600,9 +573,8 @@ bot.onText(/^забрать (\d+) (\d+)$/, async (msg, match) => {
     if (target.balance < amount) return bot.sendMessage(msg.chat.id, '❌ У игрока меньше денег');
     target.balance -= amount; saveUsers();
     bot.sendMessage(msg.chat.id, `✅ Забрано ${amount.toLocaleString()}$ у ${target.tag}`);
-    bot.sendMessage(target.id, `📩 Админ забрал у тебя ${amount.toLocaleString()}$`);
+    bot.sendMessage(target.id, `📩 Админ забрал ${amount.toLocaleString()}$`);
 });
-// БАН
 bot.onText(/^бан (\d+) (\d+) (.+)$/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     const target = getUserByUid(parseInt(match[1]));
@@ -615,35 +587,31 @@ bot.onText(/^бан (\d+) (\d+) (.+)$/, async (msg, match) => {
     bot.sendMessage(msg.chat.id, `✅ ${target.tag} забанен на ${days} дней. Причина: ${reason}`);
     bot.sendMessage(target.id, `⛔ Ты забанен до ${new Date(until).toLocaleString()} по причине: ${reason}`);
 });
-// РАЗБАН
 bot.onText(/^разбан (\d+)$/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     const target = getUserByUid(parseInt(match[1]));
     if (!target) return bot.sendMessage(msg.chat.id, '❌ Игрок не найден');
     target.ban = null; saveUsers();
     bot.sendMessage(msg.chat.id, `✅ ${target.tag} разбанен`);
-    bot.sendMessage(target.id, `✅ Твой аккаунт разблокирован`);
+    bot.sendMessage(target.id, `✅ Ты разбанен`);
 });
-// СМЕНИТЬ ID
 bot.onText(/^сменить id (\d+) (\d+)$/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     const target = getUserByUid(parseInt(match[1]));
     if (!target) return bot.sendMessage(msg.chat.id, '❌ Игрок не найден');
     const newUid = parseInt(match[2]);
-    if (getUserByUid(newUid)) return bot.sendMessage(msg.chat.id, '❌ Этот ID уже занят');
+    if (getUserByUid(newUid)) return bot.sendMessage(msg.chat.id, '❌ ID занят');
     target.uid = newUid; users.sort((a,b) => a.uid - b.uid); saveUsers();
     bot.sendMessage(msg.chat.id, `✅ ${target.tag} теперь ID ${newUid}`);
 });
-// СЕТНИК (установить ник)
 bot.onText(/^сетник (\d+) (.+)$/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     const target = getUserByUid(parseInt(match[1]));
     if (!target) return bot.sendMessage(msg.chat.id, '❌ Игрок не найден');
     target.tag = match[2]; saveUsers();
-    bot.sendMessage(msg.chat.id, `✅ Ник ${target.tag} изменён на ${match[2]}`);
-    bot.sendMessage(target.id, `📩 Админ сменил твой ник на ${match[2]}`);
+    bot.sendMessage(msg.chat.id, `✅ Ник изменён на ${match[2]}`);
+    bot.sendMessage(target.id, `📩 Админ сменил ник на ${match[2]}`);
 });
-// АГЕТ (профиль по ID)
 bot.onText(/^агет (\d+)$/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     const target = getUserByUid(parseInt(match[1]));
